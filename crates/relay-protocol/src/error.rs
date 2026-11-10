@@ -2,6 +2,147 @@ use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
+/// Relay failures, preserving the layer-owned cause. Transport failures and
+/// cancellation are intentionally absent; consumers compose those themselves.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RelayError {
+    /// A declared remote failure normalized by the adapter.
+    Provider(ProviderError),
+    /// Meaning could not be preserved when converting between representations.
+    Conversion(ConversionError),
+    /// A successful response or stream frame could not be interpreted.
+    Decode(DecodeError),
+    /// Input ended without the stream's normal terminal signal.
+    IncompleteStream(IncompleteStream),
+    /// Required setup was missing or invalid.
+    Configuration(ConfigurationError),
+    /// An optional operation was not provided.
+    UnsupportedOperation(UnsupportedOperation),
+}
+
+impl fmt::Display for RelayError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Provider(error) => write!(formatter, "provider error: {error}"),
+            Self::Conversion(error) => write!(formatter, "conversion error: {error}"),
+            Self::Decode(error) => write!(formatter, "decode error: {error}"),
+            Self::IncompleteStream(error) => write!(formatter, "incomplete stream: {error}"),
+            Self::Configuration(error) => write!(formatter, "configuration error: {error}"),
+            Self::UnsupportedOperation(error) => {
+                write!(formatter, "unsupported operation: {error}")
+            }
+        }
+    }
+}
+
+impl Error for RelayError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Provider(error) => Some(error),
+            Self::Conversion(error) => Some(error),
+            Self::Decode(error) => Some(error),
+            Self::IncompleteStream(error) => Some(error),
+            Self::Configuration(error) => Some(error),
+            Self::UnsupportedOperation(error) => Some(error),
+        }
+    }
+}
+
+impl From<ProviderError> for RelayError {
+    fn from(error: ProviderError) -> Self {
+        Self::Provider(error)
+    }
+}
+
+impl From<ConversionError> for RelayError {
+    fn from(error: ConversionError) -> Self {
+        Self::Conversion(error)
+    }
+}
+
+impl From<DecodeError> for RelayError {
+    fn from(error: DecodeError) -> Self {
+        Self::Decode(error)
+    }
+}
+
+impl From<IncompleteStream> for RelayError {
+    fn from(error: IncompleteStream) -> Self {
+        Self::IncompleteStream(error)
+    }
+}
+
+impl From<ConfigurationError> for RelayError {
+    fn from(error: ConfigurationError) -> Self {
+        Self::Configuration(error)
+    }
+}
+
+impl From<UnsupportedOperation> for RelayError {
+    fn from(error: UnsupportedOperation) -> Self {
+        Self::UnsupportedOperation(error)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecodeError {
+    pub path: String,
+    pub message: String,
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.path, self.message)
+    }
+}
+
+impl Error for DecodeError {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IncompleteStream {
+    pub message: String,
+}
+
+impl fmt::Display for IncompleteStream {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for IncompleteStream {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigurationError {
+    pub message: String,
+}
+
+impl fmt::Display for ConfigurationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for ConfigurationError {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnsupportedOperation {
+    pub operation: String,
+    pub message: String,
+}
+
+impl fmt::Display for UnsupportedOperation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.operation, self.message)
+    }
+}
+
+impl Error for UnsupportedOperation {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversionError {

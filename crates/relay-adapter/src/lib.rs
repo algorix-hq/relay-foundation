@@ -1,5 +1,5 @@
-//! Adapter-owned bridge conversion, request construction, streaming, and optional model discovery.
-//! Adapters alone classify provider errors; consumers execute transport and own connection failures.
+//! Adapter-owned request construction, provider error classification, and optional discovery.
+//! Consumer operations unify Relay failures while transport and cancellation remain consumer-owned.
 
 mod conversion;
 mod error;
@@ -11,8 +11,13 @@ pub use error::*;
 pub use http::*;
 pub use stream::*;
 
+use std::fmt;
+
 use relay_bridge::{Frame, Input, Output};
-use relay_protocol::{ConversionError, ConversionLoss, ProviderError};
+use relay_protocol::{
+    ConfigurationError, ConversionLoss, DecodeError, ProviderError, ProviderErrorCategory,
+    RelayError, UnsupportedOperation,
+};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,30 +26,28 @@ pub enum FrameItem {
     Error(ProviderError),
 }
 
-/// Owns wire framing and detection of mid-stream provider errors. Malformed
-/// framing is a conversion error; only normal data frames may reach the bridge.
-/// Return data and provider errors in input order, preserving data before an error.
+/// Classifies every provider-declared stream failure, including typed events that
+/// resemble normal data. Classify the error payload, never the HTTP 200 status;
+/// mid-stream errors have `http_status: None`. Malformed framing yields `DecodeError`.
+/// Items appended before an error remain in `out`, in input order.
 pub trait FrameDecoder: Send {
-    fn push(&mut self, bytes: &[u8]) -> Result<Vec<FrameItem>, ConversionError>;
-    fn finish(&mut self) -> Result<Vec<FrameItem>, ConversionError>;
+    fn push(&mut self, bytes: &[u8], out: &mut Vec<FrameItem>) -> Result<(), DecodeError>;
+    fn finish(&mut self, out: &mut Vec<FrameItem>) -> Result<(), DecodeError>;
 }
 
 pub trait Adapter: Send + Sync {
-    /// Format support is validated once by `Conversion::new`, not declared twice.
     fn conversion(&self) -> &Conversion;
 
-    /// Constructs endpoint, authentication, and headers, and may add required body
-    /// fields. The bridge format is available through `conversion()`.
     fn assemble_request(
         &self,
         model: &str,
         body: Value,
         stream: bool,
-    ) -> Result<ProviderRequest, ConversionError>;
+    ) -> Result<ProviderRequest, ConfigurationError>;
 
-    /// Sole classifier of non-stream provider errors, including error payloads
-    /// on 2xx responses. Preserve original code, HTTP status, request ID, and
-    /// Retry-After when available; uncertain classifications use `Unknown`.
+    /// Sole HTTP response classifier, including error payloads in 2xx responses.
+    /// Must not depend on Content-Type: JSON error text may arrive as text/plain.
+    /// Preserve available diagnostics; absent Retry-After is normal.
     fn check_response(
         &self,
         status: u16,
@@ -52,7 +55,9 @@ pub trait Adapter: Send + Sync {
         body: &[u8],
     ) -> Result<(), ProviderError>;
 
-    fn frame_decoder(&self) -> Box<dyn FrameDecoder>;
+    /// Receives successful streaming response headers so the decoder can attach
+    /// the response's request ID to mid-stream provider failures.
+    fn frame_decoder(&self, headers: &Headers) -> Box<dyn FrameDecoder>;
 
     fn model_discovery(&self) -> Option<&dyn ModelDiscovery> {
         None
@@ -60,10 +65,13 @@ pub trait Adapter: Send + Sync {
 }
 
 pub trait ModelDiscovery: Send + Sync {
-    fn build_list_models(&self, cursor: Option<&str>) -> Result<ProviderRequest, ConversionError>;
+    fn build_list_models(
+        &self,
+        cursor: Option<&str>,
+    ) -> Result<ProviderRequest, ConfigurationError>;
 
-    /// Decodes successes only; the adapter classifies errors with `check_response`.
-    fn decode_models(&self, body: &[u8]) -> Result<ModelPage, ConversionError>;
+    /// Decodes successes only; the adapter classifies failures first.
+    fn decode_models(&self, body: &[u8]) -> Result<ModelPage, DecodeError>;
 }
 
 /// IDs and pagination only; an empty page is valid, not unsupported discovery.
@@ -73,12 +81,42 @@ pub struct ModelPage {
     pub next_cursor: Option<String>,
 }
 
-/// Consumer operations supplied by Relay's blanket implementation, not adapters.
+/// Consumer operations supplied once by the blanket implementation, not overridable by adapters.
 pub trait AdapterExt: Adapter {
     fn build_request(
         &self,
         input: &Input,
-    ) -> Result<(ProviderRequest, Vec<ConversionLoss>), ConversionError> {
+    ) -> Result<(ProviderRequest, Vec<ConversionLoss>), RelayError>;
+
+    fn parse_response(
+        &self,
+        status: u16,
+        headers: &Headers,
+        body: &[u8],
+    ) -> Result<Output, RelayError>;
+
+    /// A rejected response must be classified after the consumer reads its body.
+    fn open_stream(
+        &self,
+        status: u16,
+        headers: &Headers,
+    ) -> Result<AdapterStream, RejectedResponse<'_>>;
+
+    fn list_models(&self, cursor: Option<&str>) -> Result<ProviderRequest, RelayError>;
+
+    fn parse_models(
+        &self,
+        status: u16,
+        headers: &Headers,
+        body: &[u8],
+    ) -> Result<ModelPage, RelayError>;
+}
+
+impl<A: Adapter + ?Sized> AdapterExt for A {
+    fn build_request(
+        &self,
+        input: &Input,
+    ) -> Result<(ProviderRequest, Vec<ConversionLoss>), RelayError> {
         let conversion = self.conversion();
         let encoded = conversion
             .bridge()
@@ -87,47 +125,107 @@ pub trait AdapterExt: Adapter {
         Ok((request, encoded.losses))
     }
 
-    /// Also handles rejected streaming requests after the consumer reads their body.
     fn parse_response(
         &self,
         status: u16,
         headers: &Headers,
         body: &[u8],
-    ) -> Result<Output, AdapterError> {
-        self.check_response(status, headers, body)?;
+    ) -> Result<Output, RelayError> {
+        check_response(self, status, headers, body)?;
         Ok(self.conversion().bridge().decode_response(body)?)
     }
 
-    fn stream_decoder(&self) -> AdapterStream {
-        AdapterStream {
-            frames: self.frame_decoder(),
+    fn open_stream(
+        &self,
+        status: u16,
+        headers: &Headers,
+    ) -> Result<AdapterStream, RejectedResponse<'_>> {
+        if !(200..300).contains(&status) {
+            let headers = headers.clone();
+            return Err(RejectedResponse {
+                status,
+                classify: Box::new(move |body| {
+                    self.check_response(status, &headers, body)
+                        .err()
+                        .unwrap_or_else(|| unknown_http_error(status))
+                }),
+            });
+        }
+        Ok(AdapterStream {
+            frames: self.frame_decoder(headers),
             decoder: self.conversion().bridge().stream_decoder(),
             terminal: false,
-        }
+        })
     }
 
-    /// `None` means unsupported discovery, not an empty result page.
-    fn list_models(
-        &self,
-        cursor: Option<&str>,
-    ) -> Option<Result<ProviderRequest, ConversionError>> {
-        Some(self.model_discovery()?.build_list_models(cursor))
+    fn list_models(&self, cursor: Option<&str>) -> Result<ProviderRequest, RelayError> {
+        let discovery = self.model_discovery().ok_or_else(unsupported_discovery)?;
+        Ok(discovery.build_list_models(cursor)?)
     }
 
-    /// Provider errors are classified before successful discovery data is decoded.
     fn parse_models(
         &self,
         status: u16,
         headers: &Headers,
         body: &[u8],
-    ) -> Option<Result<ModelPage, AdapterError>> {
-        let discovery = self.model_discovery()?;
-        Some(
-            self.check_response(status, headers, body)
-                .map_err(AdapterError::from)
-                .and_then(|()| discovery.decode_models(body).map_err(AdapterError::from)),
-        )
+    ) -> Result<ModelPage, RelayError> {
+        let discovery = self.model_discovery().ok_or_else(unsupported_discovery)?;
+        check_response(self, status, headers, body)?;
+        Ok(discovery.decode_models(body)?)
     }
 }
 
-impl<A: Adapter + ?Sized> AdapterExt for A {}
+/// A non-success streaming response awaiting its error body.
+pub struct RejectedResponse<'a> {
+    status: u16,
+    classify: Box<RejectionClassifier<'a>>,
+}
+
+type RejectionClassifier<'a> = dyn FnOnce(&[u8]) -> ProviderError + Send + 'a;
+
+impl RejectedResponse<'_> {
+    /// Always returns `RelayError::Provider`, even for an empty or undecodable body.
+    pub fn classify(self, body: &[u8]) -> RelayError {
+        (self.classify)(body).into()
+    }
+}
+
+impl fmt::Debug for RejectedResponse<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RejectedResponse")
+            .field("status", &self.status)
+            .finish_non_exhaustive()
+    }
+}
+
+fn check_response<A: Adapter + ?Sized>(
+    adapter: &A,
+    status: u16,
+    headers: &Headers,
+    body: &[u8],
+) -> Result<(), ProviderError> {
+    adapter.check_response(status, headers, body)?;
+    if !(200..300).contains(&status) {
+        return Err(unknown_http_error(status));
+    }
+    Ok(())
+}
+
+fn unknown_http_error(status: u16) -> ProviderError {
+    ProviderError {
+        category: ProviderErrorCategory::Unknown,
+        message: "provider returned an unsuccessful HTTP response".into(),
+        code: None,
+        http_status: Some(status),
+        request_id: None,
+        retry_after: None,
+    }
+}
+
+fn unsupported_discovery() -> UnsupportedOperation {
+    UnsupportedOperation {
+        operation: "list_models".into(),
+        message: "model discovery is not provided by this adapter".into(),
+    }
+}

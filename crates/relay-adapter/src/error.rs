@@ -1,40 +1,28 @@
-use std::{error::Error, fmt};
+use relay_bridge::Frame;
+use relay_protocol::RelayError;
 
-use relay_protocol::{ConversionError, ProviderError};
+use crate::Headers;
 
-/// Transport and connection failures remain the consumer's errors.
+/// Client-format wire mapping for already-normalized errors; never classifies failures.
+pub trait ErrorEncoder: Send + Sync {
+    /// Encodes an error before the client response has started.
+    fn encode_error(&self, error: &RelayError, stage: Stage) -> EncodedError;
+
+    /// Encodes an error after the client stream has started.
+    fn encode_stream_error(&self, error: &RelayError) -> Vec<Frame>;
+}
+
+/// A conversion failure during client request decoding (`Request`) versus result
+/// encoding (`Response`) can map to different client status codes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Request,
+    Response,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AdapterError {
-    Conversion(ConversionError),
-    Provider(ProviderError),
-}
-
-impl fmt::Display for AdapterError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Conversion(error) => write!(formatter, "conversion error: {error}"),
-            Self::Provider(error) => write!(formatter, "provider error: {error}"),
-        }
-    }
-}
-
-impl Error for AdapterError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Conversion(error) => Some(error),
-            Self::Provider(error) => Some(error),
-        }
-    }
-}
-
-impl From<ConversionError> for AdapterError {
-    fn from(error: ConversionError) -> Self {
-        Self::Conversion(error)
-    }
-}
-
-impl From<ProviderError> for AdapterError {
-    fn from(error: ProviderError) -> Self {
-        Self::Provider(error)
-    }
+pub struct EncodedError {
+    pub status: u16,
+    pub headers: Headers,
+    pub body: Vec<u8>,
 }

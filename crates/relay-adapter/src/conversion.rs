@@ -1,6 +1,7 @@
-use std::{error::Error, fmt, sync::Arc};
+use std::sync::Arc;
 
 use relay_bridge::{ApiFormat, Bridge, ConversionOptions};
+use relay_protocol::ConfigurationError;
 
 pub struct Conversion {
     bridge: Arc<dyn Bridge>,
@@ -12,11 +13,18 @@ impl Conversion {
         bridge: Arc<dyn Bridge>,
         supported_formats: &[ApiFormat],
         options: ConversionOptions,
-    ) -> Result<Self, IncompatibleFormat> {
+    ) -> Result<Self, ConfigurationError> {
         if !supported_formats.contains(bridge.format()) {
-            return Err(IncompatibleFormat {
-                bridge_format: bridge.format().clone(),
-                supported_formats: supported_formats.to_vec(),
+            let supported = supported_formats
+                .iter()
+                .map(ApiFormat::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ConfigurationError {
+                message: format!(
+                    "bridge format {} is not supported by adapter (supported formats: [{supported}])",
+                    bridge.format()
+                ),
             });
         }
         Ok(Self { bridge, options })
@@ -30,28 +38,3 @@ impl Conversion {
         &self.options
     }
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IncompatibleFormat {
-    pub bridge_format: ApiFormat,
-    pub supported_formats: Vec<ApiFormat>,
-}
-
-impl fmt::Display for IncompatibleFormat {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "bridge format {} is not supported by adapter (",
-            self.bridge_format
-        )?;
-        for (index, format) in self.supported_formats.iter().enumerate() {
-            if index > 0 {
-                formatter.write_str(", ")?;
-            }
-            write!(formatter, "{format}")?;
-        }
-        formatter.write_str(")")
-    }
-}
-
-impl Error for IncompatibleFormat {}

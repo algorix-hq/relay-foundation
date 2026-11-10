@@ -1,7 +1,8 @@
 use relay_protocol::{
-    AssistantContent, CacheControl, ConversionError, ConversionErrorKind, Message, ProviderError,
-    ProviderErrorCategory, ReasoningEffort, Request, Response, ResponseFormat, RetryAfter,
-    StopReason, StreamEvent, ToolChoice, UserContent,
+    AssistantContent, CacheControl, ConfigurationError, ConversionError, ConversionErrorKind,
+    DecodeError, IncompleteStream, Message, ProviderError, ProviderErrorCategory, ReasoningEffort,
+    RelayError, Request, Response, ResponseFormat, RetryAfter, StopReason, StreamEvent, ToolChoice,
+    UnsupportedOperation, UserContent,
 };
 use serde_json::{Value, json};
 
@@ -166,6 +167,12 @@ fn envelopes_require_the_supported_string_version() {
 
 #[test]
 fn unknown_stop_reason_retains_the_provider_string() {
+    let context: StopReason = serde_json::from_str("\"context_window_exceeded\"").unwrap();
+    assert_eq!(context, StopReason::ContextWindowExceeded);
+    assert_eq!(
+        serde_json::to_string(&context).unwrap(),
+        "\"context_window_exceeded\""
+    );
     let reason: StopReason = serde_json::from_str("\"provider_custom_stop\"").unwrap();
     assert_eq!(reason, StopReason::Other("provider_custom_stop".into()));
     assert_eq!(
@@ -294,4 +301,80 @@ fn diagnostics_preserve_provider_headers_and_conversion_locations() {
         error.to_string(),
         "/messages/0/content/1: Cannot express image"
     );
+}
+
+#[test]
+fn relay_failures_preserve_tagged_causes_and_reject_unknown_fields() {
+    use std::error::Error;
+
+    let cases: [(RelayError, Value, &str); 6] = [
+        (
+            ProviderError {
+                category: ProviderErrorCategory::Unknown,
+                message: "declared failure".into(),
+                code: None,
+                http_status: Some(500),
+                request_id: None,
+                retry_after: None,
+            }
+            .into(),
+            json!({"type": "provider", "category": "unknown", "message": "declared failure", "http_status": 500}),
+            "declared failure",
+        ),
+        (
+            ConversionError {
+                kind: ConversionErrorKind::Unrepresentable,
+                path: "/content/0".into(),
+                message: "cannot express".into(),
+            }
+            .into(),
+            json!({"type": "conversion", "kind": "unrepresentable", "path": "/content/0", "message": "cannot express"}),
+            "/content/0: cannot express",
+        ),
+        (
+            DecodeError {
+                path: "/items".into(),
+                message: "expected array".into(),
+            }
+            .into(),
+            json!({"type": "decode", "path": "/items", "message": "expected array"}),
+            "/items: expected array",
+        ),
+        (
+            IncompleteStream {
+                message: "missing terminal signal".into(),
+            }
+            .into(),
+            json!({"type": "incomplete_stream", "message": "missing terminal signal"}),
+            "missing terminal signal",
+        ),
+        (
+            ConfigurationError {
+                message: "missing setting".into(),
+            }
+            .into(),
+            json!({"type": "configuration", "message": "missing setting"}),
+            "missing setting",
+        ),
+        (
+            UnsupportedOperation {
+                operation: "list_models".into(),
+                message: "not provided".into(),
+            }
+            .into(),
+            json!({"type": "unsupported_operation", "operation": "list_models", "message": "not provided"}),
+            "list_models: not provided",
+        ),
+    ];
+    for (error, wire, source) in cases {
+        assert_eq!(serde_json::to_value(&error).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<RelayError>(wire.clone()).unwrap(),
+            error
+        );
+        assert_eq!(error.source().expect("preserved cause").to_string(), source);
+        let mut invalid = wire;
+        invalid["extra"] = json!(true);
+        assert!(serde_json::from_value::<RelayError>(invalid).is_err());
+    }
 }

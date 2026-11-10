@@ -19,6 +19,8 @@ pub struct Response {
 pub enum StopReason {
     EndTurn,
     MaxTokens,
+    /// Normal output termination because the model's context window was filled.
+    ContextWindowExceeded,
     ToolUse,
     StopSequence,
     ContentFilter,
@@ -31,6 +33,7 @@ impl Serialize for StopReason {
         serializer.serialize_str(match self {
             Self::EndTurn => "end_turn",
             Self::MaxTokens => "max_tokens",
+            Self::ContextWindowExceeded => "context_window_exceeded",
             Self::ToolUse => "tool_use",
             Self::StopSequence => "stop_sequence",
             Self::ContentFilter => "content_filter",
@@ -46,6 +49,7 @@ impl<'de> Deserialize<'de> for StopReason {
         Ok(match value.as_str() {
             "end_turn" => Self::EndTurn,
             "max_tokens" => Self::MaxTokens,
+            "context_window_exceeded" => Self::ContextWindowExceeded,
             "tool_use" => Self::ToolUse,
             "stop_sequence" => Self::StopSequence,
             "content_filter" => Self::ContentFilter,

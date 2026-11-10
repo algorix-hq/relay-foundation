@@ -1,11 +1,13 @@
-//! Strict, bidirectional API-format conversion with format-scoped native fields and stream events.
-//! Provider error detection belongs exclusively to adapters.
+//! Strict API-format conversion with format-scoped native fields and normal stream events.
+//! Bridge failures distinguish conversion, decoding, and incomplete streams; only adapters classify provider errors.
+
+mod error;
+
+pub use error::BridgeError;
 
 use std::{borrow::Cow, collections::BTreeSet, fmt};
 
-use relay_protocol::{
-    ConversionError, ConversionErrorKind, ConversionLoss, Request, Response, StreamEvent,
-};
+use relay_protocol::{ConfigurationError, ConversionLoss, Request, Response, StreamEvent};
 use serde_json::{Map, Value};
 
 /// A wire-format identifier outside protocol data, for compatibility and native-field scoping.
@@ -17,12 +19,10 @@ impl ApiFormat {
     pub const RESPONSES: Self = Self(Cow::Borrowed("responses"));
     pub const MESSAGES: Self = Self(Cow::Borrowed("messages"));
 
-    pub fn new(value: impl Into<Cow<'static, str>>) -> Result<Self, ConversionError> {
+    pub fn new(value: impl Into<Cow<'static, str>>) -> Result<Self, ConfigurationError> {
         let value = value.into();
         if value.is_empty() {
-            return Err(ConversionError {
-                kind: ConversionErrorKind::Invalid,
-                path: String::new(),
+            return Err(ConfigurationError {
                 message: "API format must not be empty".into(),
             });
         }
@@ -141,29 +141,32 @@ pub struct Encoded {
 pub trait Bridge: Send + Sync {
     fn format(&self) -> &ApiFormat;
 
-    /// Strict ingress: unknown or unrepresentable input is an error. Fields
+    /// Strict ingress: malformed or unrepresentable input yields `BridgeError::Conversion`. Fields
     /// intentionally preserved for same-format passthrough go into `NativeFields`.
-    fn decode_request(&self, body: &[u8]) -> Result<Input, ConversionError>;
+    fn decode_request(&self, body: &[u8]) -> Result<Input, BridgeError>;
 
     /// Uses `input.stream` and only `input.native_for(self.format())`. A native key
     /// colliding with a generated field is an `invalid` error, never an override.
+    /// Malformed or unrepresentable input yields `BridgeError::Conversion`.
     fn encode_request(
         &self,
         input: &Input,
         options: &ConversionOptions,
-    ) -> Result<Encoded, ConversionError>;
+    ) -> Result<Encoded, BridgeError>;
 
     /// Decodes a successful response only; never inspects it for provider errors.
-    fn decode_response(&self, body: &[u8]) -> Result<Output, ConversionError>;
+    /// An uninterpretable successful response yields `BridgeError::Decode`.
+    fn decode_response(&self, body: &[u8]) -> Result<Output, BridgeError>;
 
     /// Unrepresentable output, including unknown content, requires explicit loss
     /// permission in `options`; every omission must be reported in `Encoded.losses`.
     /// Reads only `output.native_for(self.format())`; native collisions are invalid.
+    /// Output the client format cannot express yields `BridgeError::Conversion`.
     fn encode_response(
         &self,
         output: &Output,
         options: &ConversionOptions,
-    ) -> Result<Encoded, ConversionError>;
+    ) -> Result<Encoded, BridgeError>;
 
     fn stream_decoder(&self) -> Box<dyn StreamDecoder>;
 
@@ -179,18 +182,24 @@ pub struct Frame {
 
 /// Normal-event conversion only. Never synthesize `ItemEnd` or `Stop` on failure.
 pub trait StreamDecoder: Send {
+    /// Uninterpretable successful frames yield `BridgeError::Decode`.
     /// Events appended before an error remain in `out`.
-    fn push(&mut self, frame: Frame, out: &mut Vec<StreamEvent>) -> Result<(), ConversionError>;
+    fn push(&mut self, frame: Frame, out: &mut Vec<StreamEvent>) -> Result<(), BridgeError>;
 
-    /// Called at normal end of input. Ending before a stop is an `invalid`
-    /// conversion error, not an implicit successful completion.
-    fn finish(&mut self, out: &mut Vec<StreamEvent>) -> Result<(), ConversionError>;
+    /// Called at normal end of input; ending without a stop yields
+    /// `BridgeError::IncompleteStream`, not implicit completion. Undecodable
+    /// buffered data yields `BridgeError::Decode`; prior events remain in `out`.
+    fn finish(&mut self, out: &mut Vec<StreamEvent>) -> Result<(), BridgeError>;
 }
 
 /// Converts normal events to frames; serialization of frames is the consumer's job.
 /// Omissions require explicit loss permission and must all be reported by `finish`.
 pub trait StreamEncoder: Send {
-    fn push(&mut self, event: &StreamEvent, out: &mut Vec<Frame>) -> Result<(), ConversionError>;
+    /// Output the client format cannot express yields `BridgeError::Conversion`.
+    /// Frames appended before an error remain in `out`.
+    fn push(&mut self, event: &StreamEvent, out: &mut Vec<Frame>) -> Result<(), BridgeError>;
 
-    fn finish(&mut self, out: &mut Vec<Frame>) -> Result<Vec<ConversionLoss>, ConversionError>;
+    /// Unrepresentable final output yields `BridgeError::Conversion`;
+    /// frames appended before an error remain in `out`.
+    fn finish(&mut self, out: &mut Vec<Frame>) -> Result<Vec<ConversionLoss>, BridgeError>;
 }
