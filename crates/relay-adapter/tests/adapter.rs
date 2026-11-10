@@ -129,7 +129,6 @@ impl Bridge for TestBridge {
     fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn StreamEncoder> {
         Box::new(TestStreamEncoder {
             allow_unknown: options.allow_loss.contains(&LossScope::UnknownContent),
-            losses: Vec::new(),
             fail_finish: self.fail_encoder_finish,
         })
     }
@@ -163,12 +162,16 @@ impl StreamDecoder for TestStreamDecoder {
 
 struct TestStreamEncoder {
     allow_unknown: bool,
-    losses: Vec<ConversionLoss>,
     fail_finish: bool,
 }
 
 impl StreamEncoder for TestStreamEncoder {
-    fn push(&mut self, event: &StreamEvent, out: &mut Vec<Frame>) -> Result<(), BridgeError> {
+    fn push(
+        &mut self,
+        event: &StreamEvent,
+        out: &mut Vec<Frame>,
+        losses: &mut Vec<ConversionLoss>,
+    ) -> Result<(), BridgeError> {
         if matches!(
             event,
             StreamEvent::ItemStart {
@@ -183,7 +186,7 @@ impl StreamEncoder for TestStreamEncoder {
                 });
                 return Err(unrepresentable("unknown stream item").into());
             }
-            self.losses.push(ConversionLoss {
+            losses.push(ConversionLoss {
                 path: "/items/0".into(),
                 message: "unknown item omitted".into(),
             });
@@ -196,7 +199,11 @@ impl StreamEncoder for TestStreamEncoder {
         Ok(())
     }
 
-    fn finish(&mut self, out: &mut Vec<Frame>) -> Result<Vec<ConversionLoss>, BridgeError> {
+    fn finish(
+        &mut self,
+        out: &mut Vec<Frame>,
+        _losses: &mut Vec<ConversionLoss>,
+    ) -> Result<(), BridgeError> {
         out.push(Frame {
             event: Some("tail".into()),
             data: "encoder tail".into(),
@@ -204,7 +211,7 @@ impl StreamEncoder for TestStreamEncoder {
         if self.fail_finish {
             return Err(unrepresentable("unrepresentable encoder tail").into());
         }
-        Ok(std::mem::take(&mut self.losses))
+        Ok(())
     }
 }
 
@@ -693,14 +700,23 @@ fn transcoder_emits_prior_frames_then_one_provider_error_and_stops() {
         .expect("stream")
         .transcode(
             &TestBridge::client(),
-            &ConversionOptions::default(),
+            &ConversionOptions {
+                allow_loss: [LossScope::UnknownContent].into(),
+            },
             Arc::new(TestErrorEncoder),
         );
-    let frames = transcoder.push(&[START, FAILURE, STOP].concat());
+    let frames = transcoder.push(&[START, UNKNOWN, FAILURE, STOP].concat());
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0].data, "{\"type\":\"response_start\"}");
     assert_eq!(frames[1].event.as_deref(), Some("relay-error"));
     assert!(frames[1].data.contains("provider is busy"));
+    assert_eq!(
+        transcoder.report().losses,
+        vec![ConversionLoss {
+            path: "/items/0".into(),
+            message: "unknown item omitted".into(),
+        }]
+    );
     assert_eq!(
         transcoder.report().outcome,
         Some(Outcome::Failed(RelayError::Provider(provider_failure())))
@@ -810,10 +826,20 @@ fn abandoning_a_transcode_does_not_report_incomplete_or_completed() {
         .expect("stream")
         .transcode(
             &TestBridge::client(),
-            &ConversionOptions::default(),
+            &ConversionOptions {
+                allow_loss: [LossScope::UnknownContent].into(),
+            },
             Arc::new(TestErrorEncoder),
         );
     assert_eq!(transcoder.push(START).len(), 1);
+    assert!(transcoder.push(UNKNOWN).is_empty());
+    assert_eq!(
+        transcoder.report().losses,
+        vec![ConversionLoss {
+            path: "/items/0".into(),
+            message: "unknown item omitted".into(),
+        }]
+    );
     assert_eq!(transcoder.report().outcome, None);
     drop(transcoder);
 }

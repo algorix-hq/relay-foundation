@@ -19,7 +19,7 @@ let mut request = Request {
     tools: None,
     parameters: Some(Parameters {
         max_output_tokens: Some(4096), temperature: Some(0.7),
-        top_p: Some(0.9), top_k: None, stop: vec![],
+        top_p: Some(0.9), stop: vec![],
     }),
     response_format: Some(ResponseFormat::JsonObject),
     reasoning: Some(Reasoning {
@@ -351,6 +351,9 @@ for ConversionLoss { path, message } in encoded.losses {
 let client_json = encoded.body;
 ```
 
+`LossScope::Sampling`은 대상 형식이 표현할 수 없는 temperature·top_p 생략을,
+`LossScope::DeveloperRole`은 developer 역할이 없는 형식에서 system 역할로 전송하는 것을 허용한다.
+
 ## Custom Bridge 구현
 
 ```rust
@@ -384,7 +387,7 @@ impl Bridge for GatewayJsonBridge {
         Box::new(GatewayJsonDecoder { stopped: false })
     }
     fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn StreamEncoder> {
-        Box::new(GatewayJsonEncoder { options: options.clone(), losses: Vec::new() })
+        Box::new(GatewayJsonEncoder { options: options.clone() })
     }
 }
 ```
@@ -432,14 +435,19 @@ impl StreamDecoder for GatewayJsonDecoder {
 use relay_bridge::{Frame, StreamEncoder};
 use relay_protocol::{ConversionLoss, StreamEvent};
 
-struct GatewayJsonEncoder { options: ConversionOptions, losses: Vec<ConversionLoss> }
+struct GatewayJsonEncoder { options: ConversionOptions }
 
 impl StreamEncoder for GatewayJsonEncoder {
-    fn push(&mut self, event: &StreamEvent, out: &mut Vec<Frame>) -> Result<(), BridgeError> {
-        todo!("허용한 손실만 누적하고, 표현 불가 시 BridgeError::Conversion")
+    fn push(
+        &mut self, event: &StreamEvent, out: &mut Vec<Frame>,
+        losses: &mut Vec<ConversionLoss>,
+    ) -> Result<(), BridgeError> {
+        todo!("허용한 생략은 발생 즉시 losses에 추가하고, 표현 불가 시 BridgeError::Conversion")
     }
-    fn finish(&mut self, out: &mut Vec<Frame>) -> Result<Vec<ConversionLoss>, BridgeError> {
-        Ok(std::mem::take(&mut self.losses))
+    fn finish(
+        &mut self, _out: &mut Vec<Frame>, _losses: &mut Vec<ConversionLoss>,
+    ) -> Result<(), BridgeError> {
+        Ok(())
     }
 }
 ```
@@ -569,6 +577,9 @@ match &report.outcome {
     None => println!("아직 실행 중이거나 중단됨"),
 }
 ```
+
+`report().losses`는 push·finish 중 생략이 발생할 때마다 누적되며 실패 후에도 남는다.
+전송 단절·취소로 finish 없이 중단할 때도 drop 전에 report를 읽어 이미 발생한 손실을 보관할 수 있다.
 
 ## 스트리밍 B: AdapterStream 직접
 

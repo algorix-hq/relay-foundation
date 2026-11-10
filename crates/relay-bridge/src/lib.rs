@@ -1,7 +1,10 @@
 //! Strict API-format conversion with format-scoped native fields and normal stream events.
 //! Bridge failures distinguish conversion, decoding, and incomplete streams; only adapters classify provider errors.
 
+pub mod chat_completions;
 mod error;
+pub mod messages;
+pub mod responses;
 
 pub use error::BridgeError;
 
@@ -121,14 +124,18 @@ pub struct ConversionOptions {
     pub allow_loss: BTreeSet<LossScope>,
 }
 
-/// Parts of a request, response, or stream a consumer may allow a bridge to omit.
+/// Conversion losses a consumer may explicitly allow in a request, response, or stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum LossScope {
     CacheControl,
+    /// Developer messages use the target's system role when it has no developer role.
+    DeveloperRole,
     ImageDetail,
     /// Reasoning content items, including their opaque values; not request settings.
     Reasoning,
+    /// Sampling settings (temperature, top_p) the target format cannot express are dropped.
+    Sampling,
     UnknownContent,
 }
 
@@ -193,13 +200,22 @@ pub trait StreamDecoder: Send {
 }
 
 /// Converts normal events to frames; serialization of frames is the consumer's job.
-/// Omissions require explicit loss permission and must all be reported by `finish`.
+/// Omissions require explicit loss permission and are appended to `losses` as they occur.
 pub trait StreamEncoder: Send {
     /// Output the client format cannot express yields `BridgeError::Conversion`.
-    /// Frames appended before an error remain in `out`.
-    fn push(&mut self, event: &StreamEvent, out: &mut Vec<Frame>) -> Result<(), BridgeError>;
+    /// Frames and losses appended before an error remain in the supplied buffers.
+    fn push(
+        &mut self,
+        event: &StreamEvent,
+        out: &mut Vec<Frame>,
+        losses: &mut Vec<ConversionLoss>,
+    ) -> Result<(), BridgeError>;
 
     /// Unrepresentable final output yields `BridgeError::Conversion`;
-    /// frames appended before an error remain in `out`.
-    fn finish(&mut self, out: &mut Vec<Frame>) -> Result<Vec<ConversionLoss>, BridgeError>;
+    /// frames and losses appended before an error remain in the supplied buffers.
+    fn finish(
+        &mut self,
+        out: &mut Vec<Frame>,
+        losses: &mut Vec<ConversionLoss>,
+    ) -> Result<(), BridgeError>;
 }

@@ -104,6 +104,7 @@ pub struct Transcoder {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TranscodeReport {
+    /// Losses observed so far, including before failure or abandonment.
     pub losses: Vec<ConversionLoss>,
     /// `None` while running or abandoned; transport cuts and cancellation are not
     /// incomplete-stream errors unless the consumer explicitly calls `finish`.
@@ -134,9 +135,8 @@ impl Transcoder {
         if self.report.outcome.is_some() {
             return frames;
         }
-        match self.encoder.finish(&mut frames) {
-            Ok(losses) => {
-                self.report.losses = losses;
+        match self.encoder.finish(&mut frames, &mut self.report.losses) {
+            Ok(()) => {
                 self.report.outcome = Some(Outcome::Completed);
             }
             Err(error) => self.fail(error.into(), &mut frames),
@@ -153,7 +153,7 @@ impl Transcoder {
         for item in items {
             let result = item.and_then(|event| {
                 self.encoder
-                    .push(&event, &mut frames)
+                    .push(&event, &mut frames, &mut self.report.losses)
                     .map_err(RelayError::from)
             });
             if let Err(error) = result {

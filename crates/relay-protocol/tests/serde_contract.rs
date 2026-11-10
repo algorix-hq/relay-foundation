@@ -42,7 +42,7 @@ fn full_request_preserves_grouped_options_and_mixed_content() {
                 "strict": true, "cache_control": {}}
         ], "choice": "auto", "parallel": true},
         "parameters": {"max_output_tokens": 1024, "temperature": 0.7,
-            "top_p": 0.9, "top_k": 40, "stop": ["\n"]},
+            "top_p": 0.9, "stop": ["\n"]},
         "response_format": "json_object",
         "reasoning": {"effort": "ultra", "budget_tokens": 2048,
             "summary": "auto", "thinking": "adaptive"}
@@ -125,7 +125,7 @@ fn unknown_fields_are_rejected_at_envelopes_and_nested_boundaries() {
     }
     for additional in [
         json!({"reasoning": {"effort": "low", "extra": true}}),
-        json!({"parameters": {"max_output_tokens": 1, "extra": true}}),
+        json!({"parameters": {"max_output_tokens": 1, "top_k": 40}}),
         json!({"tools": {"definitions": [], "extra": true}}),
     ] {
         let mut invalid = base.clone();
