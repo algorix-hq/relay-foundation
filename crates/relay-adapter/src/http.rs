@@ -18,9 +18,10 @@ impl Headers {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpRequest {
+pub struct ProviderRequest {
     pub method: Method,
     pub url: String,
     pub headers: Headers,
-    pub body: Option<Vec<u8>>,
+    /// Empty for GET requests.
+    pub body: Vec<u8>,
 }

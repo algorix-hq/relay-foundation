@@ -1,4 +1,4 @@
-//! Extension contracts for strict API-format conversion and normal stream normalization.
+//! Strict, bidirectional API-format conversion with format-scoped native fields and stream events.
 //! Provider error detection belongs exclusively to adapters.
 
 use std::{borrow::Cow, collections::BTreeSet, fmt};
@@ -8,7 +8,7 @@ use relay_protocol::{
 };
 use serde_json::{Map, Value};
 
-/// A wire-format identifier used only for bridge/adapter compatibility at composition.
+/// A wire-format identifier outside protocol data, for compatibility and native-field scoping.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ApiFormat(Cow<'static, str>);
 
@@ -40,13 +40,78 @@ impl fmt::Display for ApiFormat {
     }
 }
 
-/// Top-level fields of the producing bridge's own wire format, not represented by
-/// `Request` or `Response`. Only that bridge reads them; they carry no format label.
-/// Includes request options, state references, hosted tools, and response metadata.
-/// Keys are not validated by this contract. Encoding a key that collides with a
-/// field generated from `Request` is an `invalid` conversion error, never an override.
-/// Each bridge defines per-format merge rules, such as hosted tools in a tools array.
+/// Top-level wire fields accessed through `Input` and `Output`, outside protocol data.
 pub type NativeFields = Map<String, Value>;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Input {
+    pub request: Request,
+    pub stream: bool,
+    native: NativeFields,
+    format: Option<ApiFormat>,
+}
+
+impl Input {
+    pub fn new(request: Request) -> Self {
+        Self {
+            request,
+            stream: false,
+            native: NativeFields::new(),
+            format: None,
+        }
+    }
+
+    pub fn with_native(
+        format: ApiFormat,
+        request: Request,
+        stream: bool,
+        native: NativeFields,
+    ) -> Self {
+        Self {
+            request,
+            stream,
+            native,
+            format: Some(format),
+        }
+    }
+
+    /// Only a same-format bridge receives native fields; other formats ignore them.
+    /// The producing format is kept outside the protocol request.
+    pub fn native_for(&self, format: &ApiFormat) -> Option<&NativeFields> {
+        (self.format.as_ref() == Some(format)).then_some(&self.native)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Output {
+    pub response: Response,
+    native: NativeFields,
+    format: Option<ApiFormat>,
+}
+
+impl Output {
+    pub fn new(response: Response) -> Self {
+        Self {
+            response,
+            native: NativeFields::new(),
+            format: None,
+        }
+    }
+
+    pub fn with_native(format: ApiFormat, response: Response, native: NativeFields) -> Self {
+        Self {
+            response,
+            native,
+            format: Some(format),
+        }
+    }
+
+    /// Only a same-format bridge receives native fields; other formats ignore them.
+    /// The producing format is kept outside the protocol response.
+    pub fn native_for(&self, format: &ApiFormat) -> Option<&NativeFields> {
+        (self.format.as_ref() == Some(format)).then_some(&self.native)
+    }
+}
 
 /// Empty by default: conversion is fully strict. Bridges must reject omissions
 /// outside the allowed scopes and report every drop as a `ConversionLoss`.
@@ -56,7 +121,7 @@ pub struct ConversionOptions {
     pub allow_loss: BTreeSet<LossScope>,
 }
 
-/// Parts of a request a consumer may explicitly allow a bridge to omit.
+/// Parts of a request, response, or stream a consumer may allow a bridge to omit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum LossScope {
@@ -78,20 +143,31 @@ pub trait Bridge: Send + Sync {
 
     /// Strict ingress: unknown or unrepresentable input is an error. Fields
     /// intentionally preserved for same-format passthrough go into `NativeFields`.
-    fn decode_request(&self, body: &[u8]) -> Result<(Request, NativeFields), ConversionError>;
+    fn decode_request(&self, body: &[u8]) -> Result<Input, ConversionError>;
 
+    /// Uses `input.stream` and only `input.native_for(self.format())`. A native key
+    /// colliding with a generated field is an `invalid` error, never an override.
     fn encode_request(
         &self,
-        request: &Request,
-        native: &NativeFields,
-        stream: bool,
+        input: &Input,
         options: &ConversionOptions,
     ) -> Result<Encoded, ConversionError>;
 
     /// Decodes a successful response only; never inspects it for provider errors.
-    fn decode_response(&self, body: &[u8]) -> Result<(Response, NativeFields), ConversionError>;
+    fn decode_response(&self, body: &[u8]) -> Result<Output, ConversionError>;
+
+    /// Unrepresentable output, including unknown content, requires explicit loss
+    /// permission in `options`; every omission must be reported in `Encoded.losses`.
+    /// Reads only `output.native_for(self.format())`; native collisions are invalid.
+    fn encode_response(
+        &self,
+        output: &Output,
+        options: &ConversionOptions,
+    ) -> Result<Encoded, ConversionError>;
 
     fn stream_decoder(&self) -> Box<dyn StreamDecoder>;
+
+    fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn StreamEncoder>;
 }
 
 /// A normal data frame, framed by the adapter with provider error frames removed.
@@ -103,9 +179,18 @@ pub struct Frame {
 
 /// Normal-event conversion only. Never synthesize `ItemEnd` or `Stop` on failure.
 pub trait StreamDecoder: Send {
-    fn push(&mut self, frame: Frame) -> Result<Vec<StreamEvent>, ConversionError>;
+    /// Events appended before an error remain in `out`.
+    fn push(&mut self, frame: Frame, out: &mut Vec<StreamEvent>) -> Result<(), ConversionError>;
 
     /// Called at normal end of input. Ending before a stop is an `invalid`
     /// conversion error, not an implicit successful completion.
-    fn finish(&mut self) -> Result<Vec<StreamEvent>, ConversionError>;
+    fn finish(&mut self, out: &mut Vec<StreamEvent>) -> Result<(), ConversionError>;
+}
+
+/// Converts normal events to frames; serialization of frames is the consumer's job.
+/// Omissions require explicit loss permission and must all be reported by `finish`.
+pub trait StreamEncoder: Send {
+    fn push(&mut self, event: &StreamEvent, out: &mut Vec<Frame>) -> Result<(), ConversionError>;
+
+    fn finish(&mut self, out: &mut Vec<Frame>) -> Result<Vec<ConversionLoss>, ConversionError>;
 }
