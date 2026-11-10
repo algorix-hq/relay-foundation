@@ -1,0 +1,13 @@
+[package]
+name = "relay-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "API-format encoding, decoding, and stream normalization for Chat Completions, Responses, and Messages."
+
+[dependencies]
+relay-protocol.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "relay-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Provider endpoint, authentication, request construction, and sole ownership of provider error normalization for OpenAI, Anthropic, and OpenAI Compatible."
+
+[dependencies]
+relay-protocol.workspace = true
+
+[lints]
+workspace = true
