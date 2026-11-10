@@ -4,6 +4,7 @@
 - `../relay-foundation-old` is the previous implementation. Use it only as a reference for provider wire shapes. Do not port its lossy conversions or its bridge-side provider error mapping (`crates/bridge/src/error_code.rs`).
 - No CI exists yet. Before finishing, run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`.
 - Never `cargo publish`. Consumers use git dependencies pinned to `v*` tags, so tagging is the release; bump `workspace.package.version` first. `v0.x` tags belong to the old implementation.
+- Commit directly to `main` using Conventional Commits: `type(scope): summary` in English imperative, lowercase, no period, at most 72 characters. Types: `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore(release)`. Scope is the crate (`protocol`, `bridge`, `adapter`) or `workspace`; omit it for changes spanning crates. Mark breaking protocol JSON or public API changes with `!` and a `BREAKING CHANGE:` footer, because consumers pin git tags.
 - Do not edit relay-internal-app from this repo. Its gateway stays pinned to `v0.21.1` until it is migrated.
 
 ## Invariants that are easy to break
