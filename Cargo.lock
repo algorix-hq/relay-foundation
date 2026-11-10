@@ -36,7 +36,9 @@ dependencies = [
 name = "relay-adapter"
 version = "1.0.0-alpha.1"
 dependencies = [
+ "relay-bridge",
  "relay-protocol",
+ "serde_json",
 ]
 
 [[package]]
@@ -44,6 +46,7 @@ name = "relay-bridge"
 version = "1.0.0-alpha.1"
 dependencies = [
  "relay-protocol",
+ "serde_json",
 ]
 
 [[package]]

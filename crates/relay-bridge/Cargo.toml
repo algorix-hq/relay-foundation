@@ -8,6 +8,7 @@ description = "API-format encoding, decoding, and stream normalization for Chat 
 
 [dependencies]
 relay-protocol.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

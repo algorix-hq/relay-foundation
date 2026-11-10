@@ -8,6 +8,8 @@ description = "Provider endpoint, authentication, request construction, and sole
 
 [dependencies]
 relay-protocol.workspace = true
+relay-bridge.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
