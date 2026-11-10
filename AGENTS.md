@@ -1,8 +1,9 @@
 # AGENTS.md
 
-- Design and plans live only in the Notion page [Relay](https://app.notion.com/p/4114297f79608124a89fd2dfd30c21b5), section "Relay Foundation 설계". Check it before changing a contract; do not add design or plan docs to this repo.
+- Design and plans live only in the Notion page [Relay](https://app.notion.com/p/4114297f79608124a89fd2dfd30c21b5), section "Relay Foundation 설계". Check it before changing a contract; do not add design or plan docs to this repo; the only exception is `EXAMPLES.md`, which shows usage of the public API.
 - `../relay-foundation-old` is the previous implementation. Use it only as a reference for provider wire shapes. Do not port its lossy conversions or its bridge-side provider error mapping (`crates/bridge/src/error_code.rs`).
 - No CI exists yet. Before finishing, run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`.
+- When changing a public API, update `EXAMPLES.md` in the same commit; it is not compiled, so nothing else catches stale examples.
 - Never `cargo publish`. Consumers use git dependencies pinned to `v*` tags, so tagging is the release; bump `workspace.package.version` first. `v0.x` tags belong to the old implementation.
 - Commit directly to `main` using Conventional Commits: `type(scope): summary` in English imperative, lowercase, no period, at most 72 characters. Types: `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore(release)`. Scope is the crate (`protocol`, `bridge`, `adapter`) or `workspace`; omit it for changes spanning crates. Mark breaking protocol JSON or public API changes with `!` and a `BREAKING CHANGE:` footer, because consumers pin git tags.
 - Do not edit relay-internal-app from this repo. Its gateway stays pinned to `v0.21.1` until it is migrated.
