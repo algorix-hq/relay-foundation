@@ -76,41 +76,106 @@ let wire = serde_json::to_string_pretty(&request)?;
   "version": "1",
   "model": "target-model",
   "messages": [
-    {"role": "user", "content": [
-      {"type": "text", "text": "사진과 조회 결과를 설명해 줘"},
-      {"type": "image", "source": {"type": "url", "url": "https://example.com/photo.png"}, "detail": "high"}
-    ]},
-    {"role": "assistant", "content": [
-      {"type": "tool_call", "id": "call_1", "name": "lookup", "arguments": "{ \"key\": \"photo\" }"}
-    ]},
-    {"role": "user", "content": [
-      {"type": "tool_result", "tool_call_id": "call_1", "content": [
-        {"type": "text", "text": "서울"}
-      ], "is_error": false}
-    ]}
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "사진과 조회 결과를 설명해 줘"
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "url",
+            "url": "https://example.com/photo.png"
+          },
+          "detail": "high"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_call",
+          "id": "call_1",
+          "name": "lookup",
+          "arguments": "{ \"key\": \"photo\" }"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_call_id": "call_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "서울"
+            }
+          ],
+          "is_error": false
+        }
+      ]
+    }
   ],
   "tools": {
-    "definitions": [{
-      "type": "function", "name": "lookup", "description": "키로 조회",
-      "parameters": {
-        "type": "object", "properties": {"key": {"type": "string"}},
-        "required": ["key"], "additionalProperties": false
-      },
-      "strict": true
-    }],
-    "choice": "auto", "parallel": false
+    "definitions": [
+      {
+        "type": "function",
+        "name": "lookup",
+        "description": "키로 조회",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    ],
+    "choice": "auto",
+    "parallel": false
   },
-  "parameters": {"max_output_tokens": 4096, "temperature": 0.7, "top_p": 0.9},
+  "parameters": {
+    "max_output_tokens": 4096,
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
   "response_format": "json_object",
-  "reasoning": {"effort": "high", "budget_tokens": 1024, "summary": "auto", "thinking": "adaptive"}
+  "reasoning": {
+    "effort": "high",
+    "budget_tokens": 1024,
+    "summary": "auto",
+    "thinking": "adaptive"
+  }
 }
 ```
 ```json
 {
-  "tools": {"definitions": [], "choice": {"type": "function", "name": "lookup"}},
+  "tools": {
+    "definitions": [],
+    "choice": {
+      "type": "function",
+      "name": "lookup"
+    }
+  },
   "response_format": {
-    "type": "json_schema", "name": "result", "description": "결과",
-    "schema": {"type": "object"}, "strict": true
+    "type": "json_schema",
+    "name": "result",
+    "description": "결과",
+    "schema": {
+      "type": "object"
+    },
+    "strict": true
   }
 }
 ```
@@ -119,18 +184,46 @@ let wire = serde_json::to_string_pretty(&request)?;
 
 ```json
 {
-  "version": "1", "id": "resp_1", "model": "target-model",
+  "version": "1",
+  "id": "resp_1",
+  "model": "target-model",
   "content": [
-    {"type": "text", "text": "조회했어"},
-    {"type": "tool_call", "id": "call_2", "name": "lookup", "arguments": "{ \"key\":1, \"key\": 2 }"},
-    {"type": "reasoning", "summary": ["조회 필요"], "opaque": "opaque-value"},
-    {"type": "reasoning", "text": ""},
-    {"type": "unknown", "value": {"type": "future_output", "payload": 7}}
+    {
+      "type": "text",
+      "text": "조회했어"
+    },
+    {
+      "type": "tool_call",
+      "id": "call_2",
+      "name": "lookup",
+      "arguments": "{ \"key\":1, \"key\": 2 }"
+    },
+    {
+      "type": "reasoning",
+      "summary": [
+        "조회 필요"
+      ],
+      "opaque": "opaque-value"
+    },
+    {
+      "type": "reasoning",
+      "text": ""
+    },
+    {
+      "type": "unknown",
+      "value": {
+        "type": "future_output",
+        "payload": 7
+      }
+    }
   ],
   "stop_reason": "pause_turn",
   "usage": {
-    "input_tokens": 900, "output_tokens": 200,
-    "cache_read_tokens": 500, "cache_write_tokens": 100, "reasoning_tokens": 120
+    "input_tokens": 900,
+    "output_tokens": 200,
+    "cache_read_tokens": 500,
+    "cache_write_tokens": 100,
+    "reasoning_tokens": 120
   }
 }
 ```
@@ -163,20 +256,20 @@ if let StopReason::Other(value) = &response.stop_reason {
 ## StreamEvent 순서
 
 ```json
-{"type":"response_start","id":"resp_1","model":"target-model"}
-{"type":"item_start","index":0,"item":{"type":"reasoning"}}
-{"type":"delta","index":0,"delta":{"type":"reasoning_text","text":"확인 중"}}
-{"type":"delta","index":0,"delta":{"type":"reasoning_summary","summary_index":0,"text":"조회"}}
-{"type":"delta","index":0,"delta":{"type":"reasoning_opaque","value":"opaque-value"}}
-{"type":"item_end","index":0}
-{"type":"item_start","index":1,"item":{"type":"text"}}
-{"type":"delta","index":1,"delta":{"type":"text","text":"답변"}}
-{"type":"item_end","index":1}
-{"type":"item_start","index":2,"item":{"type":"tool_call","id":"call_1","name":"lookup"}}
-{"type":"delta","index":2,"delta":{"type":"tool_call_arguments","text":"{\"key\":"}}
-{"type":"delta","index":2,"delta":{"type":"tool_call_arguments","text":"1}"}}
-{"type":"item_end","index":2}
-{"type":"stop","stop_reason":"tool_use","usage":{"input_tokens":20,"output_tokens":9}}
+{"type": "response_start", "id": "resp_1", "model": "target-model"}
+{"type": "item_start", "index": 0, "item": {"type": "reasoning"}}
+{"type": "delta", "index": 0, "delta": {"type": "reasoning_text", "text": "확인 중"}}
+{"type": "delta", "index": 0, "delta": {"type": "reasoning_summary", "summary_index": 0, "text": "조회"}}
+{"type": "delta", "index": 0, "delta": {"type": "reasoning_opaque", "value": "opaque-value"}}
+{"type": "item_end", "index": 0}
+{"type": "item_start", "index": 1, "item": {"type": "text"}}
+{"type": "delta", "index": 1, "delta": {"type": "text", "text": "답변"}}
+{"type": "item_end", "index": 1}
+{"type": "item_start", "index": 2, "item": {"type": "tool_call", "id": "call_1", "name": "lookup"}}
+{"type": "delta", "index": 2, "delta": {"type": "tool_call_arguments", "text": "{\"key\":"}}
+{"type": "delta", "index": 2, "delta": {"type": "tool_call_arguments", "text": "1}"}}
+{"type": "item_end", "index": 2}
+{"type": "stop", "stop_reason": "tool_use", "usage": {"input_tokens": 20, "output_tokens": 9}}
 ```
 
 ## RelayError 분기
