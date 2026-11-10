@@ -6,6 +6,7 @@
 - When changing a public API, update `EXAMPLES.md` in the same commit; it is not compiled, so nothing else catches stale examples.
 - Never `cargo publish`. Consumers use git dependencies pinned to `v*` tags, so tagging is the release; bump `workspace.package.version` first. `v0.x` tags belong to the old implementation.
 - Commit directly to `main` using Conventional Commits: `type(scope): summary` in English imperative, lowercase, no period, at most 72 characters. Types: `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore(release)`. Scope is the crate (`protocol`, `bridge`, `adapter`) or `workspace`; omit it for changes spanning crates. Mark breaking protocol JSON or public API changes with `!` and a `BREAKING CHANGE:` footer, because consumers pin git tags.
+- Live OpenAI and Anthropic calls are billed. Verify wire compatibility offline first: compare against the official SDK request/response types and recorded fixtures. Make a live call only when an offline check cannot answer the question, keep it minimal (small model, low `max_tokens`), and record the response as a fixture so it is not repeated. Keys are in `.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`); never print, log, or commit them, and never put them in fixtures.
 - Do not edit relay-internal-app from this repo. Its gateway stays pinned to `v0.21.1` until it is migrated.
 
 ## Invariants that are easy to break
