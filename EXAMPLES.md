@@ -355,6 +355,18 @@ let options = ConversionOptions {
 let encoded = with_fallback.encode_request(&request, &options)?;
 ```
 
+## Responses
+
+```rust
+use relay_bridge::{Bridge, ConversionOptions, ResponsesBridge};
+use relay_bridge::responses::ResponsesBridgeConfig;
+
+let default_store = ResponsesBridge::new();
+let stateless = ResponsesBridge::with_config(ResponsesBridgeConfig { store: Some(false) });
+
+let encoded = stateless.encode_request(&request, &ConversionOptions::default())?;
+```
+
 ## ConversionOptions와 손실 보고
 
 ```rust
