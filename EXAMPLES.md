@@ -343,6 +343,7 @@ use relay_protocol::ConversionLoss;
 
 let options = ConversionOptions {
     allow_loss: [LossScope::UnknownContent].into(),
+    created_at: Some(request_received_at),
 };
 let encoded = client.encode_response(&output, &options)?;
 for ConversionLoss { path, message } in encoded.losses {

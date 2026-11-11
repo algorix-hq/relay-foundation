@@ -702,6 +702,7 @@ fn transcoder_emits_prior_frames_then_one_provider_error_and_stops() {
             &TestBridge::client(),
             &ConversionOptions {
                 allow_loss: [LossScope::UnknownContent].into(),
+                ..Default::default()
             },
             Arc::new(TestErrorEncoder),
         );
@@ -794,6 +795,7 @@ fn successful_transcode_flushes_stop_reports_losses_and_completes() {
             &TestBridge::client(),
             &ConversionOptions {
                 allow_loss: [LossScope::UnknownContent].into(),
+                ..Default::default()
             },
             Arc::new(TestErrorEncoder),
         );
@@ -828,6 +830,7 @@ fn abandoning_a_transcode_does_not_report_incomplete_or_completed() {
             &TestBridge::client(),
             &ConversionOptions {
                 allow_loss: [LossScope::UnknownContent].into(),
+                ..Default::default()
             },
             Arc::new(TestErrorEncoder),
         );
@@ -906,6 +909,7 @@ fn build_request_requires_loss_permission_and_returns_encode_losses() {
         Arc::new(TestBridge::provider()),
         ConversionOptions {
             allow_loss: [LossScope::UnknownContent].into(),
+            ..Default::default()
         },
     );
     let (req, losses) = adapter.build_request(&input).expect("explicit omission");

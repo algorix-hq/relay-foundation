@@ -122,6 +122,9 @@ impl Output {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConversionOptions {
     pub allow_loss: BTreeSet<LossScope>,
+    /// Unix seconds for client-format fields that require a creation time the source
+    /// response did not provide. Bridges never read a clock; without it they fail.
+    pub created_at: Option<u64>,
 }
 
 /// Conversion losses a consumer may explicitly allow in a request, response, or stream.
