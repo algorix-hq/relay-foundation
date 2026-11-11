@@ -341,6 +341,20 @@ let response_losses = encoded.losses;
 let legacy_server = ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens);
 ```
 
+## Messages
+
+```rust
+use relay_bridge::{Bridge, ConversionOptions, LossScope, MessagesBridge};
+
+let strict = MessagesBridge::new();
+let with_fallback = MessagesBridge::with_default_max_tokens(4096);
+
+let options = ConversionOptions {
+    allow_loss: [LossScope::Sampling, LossScope::DeveloperRole].into(),
+};
+let encoded = with_fallback.encode_request(&request, &options)?;
+```
+
 ## ConversionOptions와 손실 보고
 
 ```rust
