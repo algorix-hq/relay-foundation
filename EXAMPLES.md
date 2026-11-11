@@ -311,14 +311,21 @@ fn describe(error: &RelayError) -> String {
 
 ```rust
 use relay_bridge::{Bridge, ChatCompletionsBridge, ConversionOptions, Input};
+use relay_bridge::chat_completions::MaxTokensField;
 
 let client = ChatCompletionsBridge::new();
 let input: Input = client.decode_request(&client_body)?;
 println!("모델: {}, 스트림: {}", input.request.model, input.stream);
 
-let encoded = client.encode_response(&output, &ConversionOptions::default())?;
+let options = ConversionOptions {
+    created_at: Some(request_received_at),
+    ..Default::default()
+};
+let encoded = client.encode_response(&output, &options)?;
 let client_json = encoded.body;
 let response_losses = encoded.losses;
+
+let legacy_server = ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens);
 ```
 
 ## Native fields
@@ -530,7 +537,11 @@ async fn complete(
     let headers = headers_of(&response)?;
     let body = response.bytes().await?;
     let output = adapter.parse_response(status, &headers, &body)?;
-    let encoded = client.encode_response(&output, &ConversionOptions::default())?;
+    let options = ConversionOptions {
+        created_at: Some(request_received_at),
+        ..Default::default()
+    };
+    let encoded = client.encode_response(&output, &options)?;
     Ok(encoded)
 }
 ```
@@ -556,7 +567,11 @@ let stream = match adapter.open_stream(status, &headers) {
     }
 };
 let errors: Arc<dyn ErrorEncoder> = Arc::new(ChatCompletionsErrors::new());
-let mut transcoder = stream.transcode(&client, &ConversionOptions::default(), errors);
+let options = ConversionOptions {
+    created_at: Some(request_received_at),
+    ..Default::default()
+};
+let mut transcoder = stream.transcode(&client, &options, errors);
 ```
 ```rust
 use relay_adapter::Outcome;
