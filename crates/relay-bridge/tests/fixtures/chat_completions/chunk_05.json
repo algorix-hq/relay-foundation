@@ -1,0 +1,1 @@
+{"id":"chatcmpl_fixture","created":1234,"model":"test-model","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":9,"total_tokens":29,"prompt_tokens_details":{"cached_tokens":10,"cache_write_tokens":4},"completion_tokens_details":{"reasoning_tokens":3}}}

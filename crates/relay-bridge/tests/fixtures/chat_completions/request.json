@@ -1,0 +1,34 @@
+{
+  "model": "test-model",
+  "stream": true,
+  "messages": [
+    {"role": "system", "content": "Be helpful"},
+    {"role": "developer", "content": "Use tools"},
+    {"role": "user", "content": [
+      {"type": "text", "text": "Read these"},
+      {"type": "image_url", "image_url": {"url": "https://example.com/image.png", "detail": "high"}},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U=", "detail": "auto"}},
+      {"type": "file", "file": {"file_data": "data:application/pdf;base64,cGRm", "filename": "report.pdf"}}
+    ]},
+    {"role": "assistant", "content": null, "tool_calls": [
+      {"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{ \"a\":1, \"a\": 2 }"}}
+    ]},
+    {"role": "tool", "tool_call_id": "call_1", "content": "Found"},
+    {"role": "assistant", "content": "Answer"}
+  ],
+  "tools": [{"type": "function", "function": {
+    "name": "lookup", "description": "Look up an item", "parameters": {"type": "object", "properties": {"a": {"type": "integer"}}}, "strict": true
+  }}],
+  "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+  "parallel_tool_calls": true,
+  "max_completion_tokens": 16,
+  "temperature": 0.5,
+  "top_p": 0.9,
+  "stop": ["END"],
+  "reasoning_effort": "low",
+  "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "description": "An answer", "schema": {"type": "object"}, "strict": true}},
+  "seed": 42,
+  "service_tier": "default",
+  "metadata": {"consumer": "fixture"},
+  "stream_options": {"include_usage": true}
+}

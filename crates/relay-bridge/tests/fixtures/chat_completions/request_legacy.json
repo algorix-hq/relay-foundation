@@ -1,0 +1,1 @@
+{"model":"test-model","messages":[{"role":"user","content":"Hi"}],"stream":false,"max_tokens":16,"functions":[{"name":"lookup","parameters":{"type":"object"}}],"function_call":{"name":"lookup"}}

@@ -1,0 +1,1 @@
+{"id":"chatcmpl_fixture","created":1234,"model":"test-model","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}

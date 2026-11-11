@@ -1,0 +1,1 @@
+{"id":"chatcmpl_fixture","created":1234,"model":"test-model","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","id":"call_1","function":{"name":"lookup"}}]},"finish_reason":null}]}

@@ -1,0 +1,1 @@
+{"id":"chatcmpl_custom","created":1234,"model":"test-model","object":"chat.completion","choices":[{"index":0,"finish_reason":"tool_calls","logprobs":null,"message":{"role":"assistant","content":null,"refusal":null,"tool_calls":[{"id":"call_custom","type":"custom","custom":{"name":"grammar","input":"raw input"}}]}}]}
