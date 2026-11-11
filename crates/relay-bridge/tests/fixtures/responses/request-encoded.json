@@ -1,0 +1,148 @@
+{
+  "model": "gpt-5-nano",
+  "input": [
+    {
+      "type": "message",
+      "role": "system",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Follow the policy"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Use tools"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Look"
+        },
+        {
+          "type": "input_image",
+          "detail": "high",
+          "image_url": "data:image/png;base64,aW1hZ2U="
+        },
+        {
+          "type": "input_file",
+          "file_url": "https://example.com/report.pdf",
+          "filename": "report.pdf"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Checking"
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_1",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Check the report"
+        }
+      ],
+      "content": [
+        {
+          "type": "reasoning_text",
+          "text": "Think"
+        }
+      ],
+      "encrypted_content": "opaque-value"
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_1",
+      "name": "lookup",
+      "arguments": "{ \"key\":1, \"key\": 2 }"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_1",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "Found"
+        },
+        {
+          "type": "input_image",
+          "detail": "low",
+          "image_url": "https://example.com/a.png"
+        },
+        {
+          "type": "input_file",
+          "file_data": "data:application/pdf;base64,cGRm",
+          "filename": "a.pdf"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "system",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Continue"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "lookup",
+      "description": "Look up a key",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "integer"
+          }
+        }
+      },
+      "strict": true
+    }
+  ],
+  "tool_choice": {
+    "type": "function",
+    "name": "lookup"
+  },
+  "parallel_tool_calls": true,
+  "max_output_tokens": 32,
+  "temperature": 0.4,
+  "top_p": 0.8,
+  "reasoning": {
+    "effort": "low",
+    "summary": "auto"
+  },
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "answer",
+      "description": "The answer",
+      "schema": {
+        "type": "object"
+      },
+      "strict": false
+    }
+  },
+  "stream": true
+}

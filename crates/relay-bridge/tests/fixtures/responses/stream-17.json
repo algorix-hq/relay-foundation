@@ -1,0 +1,9 @@
+{
+  "type": "response.output_text.delta",
+  "sequence_number": 17,
+  "output_index": 1,
+  "item_id": "msg_stream",
+  "content_index": 0,
+  "delta": "Answer",
+  "logprobs": []
+}

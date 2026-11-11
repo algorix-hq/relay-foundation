@@ -1,0 +1,6 @@
+{
+  "id":"resp_failed","object":"response","created_at":1700000000,"model":"gpt-5-nano",
+  "status":"failed","error":{"code":"server_error","message":"Failure"},"incomplete_details":null,
+  "access_programs":null,"instructions":null,"metadata":null,"parallel_tool_calls":false,
+  "temperature":null,"top_p":null,"tool_choice":"none","tools":[],"output_text":"","output":[]
+}

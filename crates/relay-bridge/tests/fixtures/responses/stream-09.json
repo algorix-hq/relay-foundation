@@ -1,0 +1,11 @@
+{
+  "type": "response.content_part.done",
+  "sequence_number": 9,
+  "output_index": 0,
+  "item_id": "rs_stream",
+  "content_index": 0,
+  "part": {
+    "type": "reasoning_text",
+    "text": "Thinking"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "type": "response.reasoning_text.done",
+  "sequence_number": 8,
+  "output_index": 0,
+  "item_id": "rs_stream",
+  "content_index": 0,
+  "text": "Thinking"
+}

@@ -1,0 +1,8 @@
+{
+  "type": "response.reasoning_text.delta",
+  "sequence_number": 3,
+  "output_index": 0,
+  "item_id": "rs_stream",
+  "content_index": 0,
+  "delta": "Thinking"
+}

@@ -1,0 +1,12 @@
+{
+  "id":"resp_incomplete", "object":"response", "created_at":1700000000,
+  "model":"gpt-5-nano", "status":"incomplete", "error":null,
+  "incomplete_details":{"reason":"max_output_tokens"},
+  "access_programs":null, "instructions":null, "metadata":{},
+  "tools":[{"type":"function","name":"lookup","description":"Look up a key","parameters":{"type":"object","properties":{"key":{"type":"integer"}}},"strict":true}],
+  "tool_choice":{"type":"function","name":"lookup"}, "parallel_tool_calls":true,
+  "temperature":0.4, "top_p":0.8, "max_output_tokens":32,
+  "reasoning":{"effort":"low","summary":"auto"},
+  "text":{"format":{"type":"json_schema","name":"answer","description":"The answer","schema":{"type":"object"},"strict":false}},
+  "output_text":"", "output":[]
+}

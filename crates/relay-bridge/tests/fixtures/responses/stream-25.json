@@ -1,0 +1,12 @@
+{
+  "type": "response.output_item.done",
+  "sequence_number": 25,
+  "output_index": 2,
+  "item": {
+    "type": "function_call",
+    "id": "fc_stream",
+    "call_id": "call_stream",
+    "name": "lookup",
+    "arguments": "{ \"key\":1, \"key\": 2 }"
+  }
+}
