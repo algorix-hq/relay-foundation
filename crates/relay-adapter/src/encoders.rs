@@ -7,9 +7,9 @@ use crate::{EncodedError, ErrorEncoder, Headers, Stage};
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ChatCompletionsErrors;
 
-/// Standalone stream errors use sequence number zero. The normal Responses
-/// stream encoder owns numbering; the ErrorEncoder contract cannot observe its
-/// counter, so consumers needing continuous numbering must rewrite this field.
+/// Stream error events always use sequence number zero, because this encoder
+/// cannot see the stream encoder's counter. Accepted as is: the official SDK
+/// handles `error` events regardless of `sequence_number` (openai 7.55.0).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ResponsesErrors;
 
