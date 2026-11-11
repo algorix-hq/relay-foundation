@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "sequence_number": 0,
+  "code": "server_error",
+  "message": "Failure",
+  "param": null
+}

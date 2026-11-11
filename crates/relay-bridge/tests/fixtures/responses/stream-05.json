@@ -1,0 +1,8 @@
+{
+  "type": "response.reasoning_summary_text.delta",
+  "sequence_number": 5,
+  "output_index": 0,
+  "item_id": "rs_stream",
+  "summary_index": 0,
+  "delta": "One"
+}

@@ -1,0 +1,16 @@
+{
+  "id":"resp_1","object":"response","created_at":1700000000,"model":"gpt-5-nano",
+  "status":"completed","error":null,"incomplete_details":null,
+  "access_programs":null,"instructions":null,"metadata":{"consumer":"test"},
+  "parallel_tool_calls":true,"temperature":null,"top_p":null,"tool_choice":"auto","tools":[],
+  "output_text":"Answer",
+  "output":[
+    {"type":"message","id":"msg_1","role":"assistant","status":"completed","phase":"commentary","content":[{"type":"output_text","text":"Answer","annotations":[{"type":"url_citation","url":"https://example.com","title":"Reference","start_index":0,"end_index":6}],"logprobs":[]}]},
+    {"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{ \"key\":1, \"key\": 2 }","status":"completed"},
+    {"type":"reasoning","id":"rs_1","status":"completed","summary":[{"type":"summary_text","text":"One"},{"type":"summary_text","text":"Two"}],"content":[{"type":"reasoning_text","text":"Thinking"}],"encrypted_content":"opaque-value"},
+    {"type":"message","id":"msg_refusal","role":"assistant","status":"completed","content":[{"type":"refusal","refusal":"Cannot comply"}]},
+    {"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"weather"}}
+  ],
+  "usage":{"input_tokens":20,"output_tokens":9,"total_tokens":29,"input_tokens_details":{"cached_tokens":5,"cache_write_tokens":2,"cache_write_tokens_details":{"ttl_12h_tokens":2,"ttl_30m_tokens":0}},"output_tokens_details":{"reasoning_tokens":4}},
+  "service_tier":"default","previous_response_id":"resp_previous"
+}

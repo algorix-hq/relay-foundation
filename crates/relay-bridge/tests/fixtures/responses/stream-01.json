@@ -1,0 +1,10 @@
+{
+  "type": "response.output_item.added",
+  "sequence_number": 1,
+  "output_index": 0,
+  "item": {
+    "type": "reasoning",
+    "id": "rs_stream",
+    "summary": []
+  }
+}

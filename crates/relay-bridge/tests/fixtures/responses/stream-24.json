@@ -1,0 +1,7 @@
+{
+  "type": "response.function_call_arguments.done",
+  "sequence_number": 24,
+  "output_index": 2,
+  "item_id": "fc_stream",
+  "arguments": "{ \"key\":1, \"key\": 2 }"
+}

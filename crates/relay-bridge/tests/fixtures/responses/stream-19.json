@@ -1,0 +1,12 @@
+{
+  "type": "response.content_part.done",
+  "sequence_number": 19,
+  "output_index": 1,
+  "item_id": "msg_stream",
+  "content_index": 0,
+  "part": {
+    "type": "output_text",
+    "text": "Answer",
+    "annotations": []
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "type": "response.output_item.added",
+  "sequence_number": 15,
+  "output_index": 1,
+  "item": {
+    "type": "message",
+    "id": "msg_stream",
+    "role": "assistant",
+    "status": "in_progress",
+    "content": []
+  }
+}

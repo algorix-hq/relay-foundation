@@ -1,0 +1,12 @@
+{
+  "type": "response.content_part.added",
+  "sequence_number": 16,
+  "output_index": 1,
+  "item_id": "msg_stream",
+  "content_index": 0,
+  "part": {
+    "type": "output_text",
+    "text": "",
+    "annotations": []
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "type": "response.reasoning_summary_part.done",
+  "sequence_number": 13,
+  "output_index": 0,
+  "item_id": "rs_stream",
+  "summary_index": 1,
+  "part": {
+    "type": "summary_text",
+    "text": "Two"
+  }
+}

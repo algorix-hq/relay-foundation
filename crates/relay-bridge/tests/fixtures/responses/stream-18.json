@@ -1,0 +1,9 @@
+{
+  "type": "response.output_text.done",
+  "sequence_number": 18,
+  "output_index": 1,
+  "item_id": "msg_stream",
+  "content_index": 0,
+  "text": "Answer",
+  "logprobs": []
+}

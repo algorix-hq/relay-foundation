@@ -1,0 +1,7 @@
+{
+  "type": "response.function_call_arguments.delta",
+  "sequence_number": 22,
+  "output_index": 2,
+  "item_id": "fc_stream",
+  "delta": "{ \"key\":"
+}

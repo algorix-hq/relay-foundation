@@ -1,0 +1,21 @@
+{
+  "id": "resp_incomplete",
+  "object": "response",
+  "created_at": 1700000000.25,
+  "model": "gpt-5-nano",
+  "status": "incomplete",
+  "error": null,
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "access_programs": null,
+  "instructions": null,
+  "metadata": null,
+  "parallel_tool_calls": false,
+  "temperature": null,
+  "top_p": null,
+  "tool_choice": "none",
+  "tools": [],
+  "output_text": "",
+  "output": []
+}

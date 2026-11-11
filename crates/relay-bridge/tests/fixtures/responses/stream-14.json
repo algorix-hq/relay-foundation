@@ -1,0 +1,26 @@
+{
+  "type": "response.output_item.done",
+  "sequence_number": 14,
+  "output_index": 0,
+  "item": {
+    "type": "reasoning",
+    "id": "rs_stream",
+    "summary": [
+      {
+        "type": "summary_text",
+        "text": "One"
+      },
+      {
+        "type": "summary_text",
+        "text": "Two"
+      }
+    ],
+    "content": [
+      {
+        "type": "reasoning_text",
+        "text": "Thinking"
+      }
+    ],
+    "encrypted_content": "opaque-value"
+  }
+}
