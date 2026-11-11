@@ -6,6 +6,7 @@ mod error;
 pub mod messages;
 pub mod responses;
 
+pub use chat_completions::ChatCompletionsBridge;
 pub use error::BridgeError;
 
 use std::{borrow::Cow, collections::BTreeSet, fmt};

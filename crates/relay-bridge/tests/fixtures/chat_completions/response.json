@@ -1,0 +1,9 @@
+{
+  "id":"chatcmpl_fixture", "created":1234, "model":"test-model", "object":"chat.completion",
+  "choices":[{"index":0,"finish_reason":"tool_calls","logprobs":null,"message":{
+    "role":"assistant","content":"Checking", "refusal":null,
+    "tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{ \"x\": 1 }"}}]
+  }}],
+  "usage":{"prompt_tokens":20,"completion_tokens":9,"total_tokens":29,"prompt_tokens_details":{"cached_tokens":10,"cache_write_tokens":4},"completion_tokens_details":{"reasoning_tokens":3}},
+  "system_fingerprint":"fp_fixture", "service_tier":"default", "metadata":{"consumer":"fixture"}
+}

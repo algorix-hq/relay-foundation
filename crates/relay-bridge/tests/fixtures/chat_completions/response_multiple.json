@@ -1,0 +1,1 @@
+{"id":"chatcmpl_multiple","created":1234,"model":"test-model","object":"chat.completion","choices":[{"index":0,"finish_reason":"stop","logprobs":null,"message":{"role":"assistant","content":"A","refusal":null}},{"index":1,"finish_reason":"stop","logprobs":null,"message":{"role":"assistant","content":"B","refusal":null}}]}

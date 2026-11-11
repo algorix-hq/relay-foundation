@@ -1,0 +1,1 @@
+{"id":"chatcmpl_refusal","created":1234,"model":"test-model","object":"chat.completion","choices":[{"index":0,"finish_reason":"content_filter","logprobs":null,"message":{"role":"assistant","content":null,"refusal":"Cannot comply"}}]}

@@ -1,0 +1,1 @@
+{"model":"test-model","messages":[{"role":"user","content":"Hi"}],"stream":false,"max_completion_tokens":16,"tool_choice":"required","parallel_tool_calls":false,"response_format":{"type":"json_object"}}
