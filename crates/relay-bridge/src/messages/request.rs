@@ -1,21 +1,21 @@
 use relay_protocol::{
-    Message, Parameters, Reasoning, ReasoningEffort, Request, ResponseFormat, ThinkingMode, Tool,
-    ToolChoice, ToolConfig, Version,
+    Delivery, Message, Parameters, Reasoning, ReasoningEffort, Request, ResponseFormat,
+    ThinkingMode, Tool, ToolChoice, ToolConfig, Version,
 };
 use serde_json::{Value, json};
 
 use super::{content::*, *};
 
-pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
+pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
     let value: Value = serde_json::from_slice(body).map_err(|e| invalid("", e.to_string()))?;
-    let mut native = object(&value, "")?.clone();
-    let model = string(&take(&mut native, "model"), "/model")?;
-    let max_output_tokens = unsigned(&take(&mut native, "max_tokens"), "/max_tokens")?;
-    let wire_messages = take(&mut native, "messages");
+    let mut remaining = object(&value, "")?.clone();
+    let model = string(&take(&mut remaining, "model"), "/model")?;
+    let max_output_tokens = unsigned(&take(&mut remaining, "max_tokens"), "/max_tokens")?;
+    let wire_messages = take(&mut remaining, "messages");
     let wire_messages = array(&wire_messages, "/messages")?;
     validate_system_positions(wire_messages)?;
     let mut messages = Vec::new();
-    if let Some(system) = native.remove("system") {
+    if let Some(system) = remaining.remove("system") {
         messages.push(Message::System {
             content: text_blocks(&system, "/system")?,
         });
@@ -35,13 +35,26 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
                 let content = if value["content"].is_string() {
                     text_blocks(&value["content"], &content_path)?
                         .into_iter()
-                        .map(relay_protocol::AssistantContent::Text)
+                        .enumerate()
+                        .map(|(i, part)| relay_protocol::AssistantContent::Text {
+                            id: format!("{path}:{i}"),
+                            provider_id: None,
+                            text: part.text,
+                            cache_control: part.cache_control,
+                        })
                         .collect()
                 } else {
                     array(&value["content"], &content_path)?
                         .iter()
                         .enumerate()
-                        .map(|(i, v)| decode_assistant(v, &format!("{content_path}/{i}"), true))
+                        .map(|(i, v)| {
+                            decode_assistant(
+                                v,
+                                &format!("{content_path}/{i}"),
+                                true,
+                                &format!("{path}:{i}"),
+                            )
+                        })
                         .collect::<Result<_, _>>()?
                 };
                 Message::Assistant { content }
@@ -50,26 +63,26 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
         };
         messages.push(message);
     }
-    let stream = native
+    let stream = remaining
         .remove("stream")
         .map(|v| boolean(&v, "/stream"))
         .transpose()?
         .unwrap_or(false);
-    let temperature = native
+    let temperature = remaining
         .remove("temperature")
         .map(|v| {
             v.as_f64()
                 .ok_or_else(|| invalid("/temperature", "expected a number"))
         })
         .transpose()?;
-    let top_p = native
+    let top_p = remaining
         .remove("top_p")
         .map(|v| {
             v.as_f64()
                 .ok_or_else(|| invalid("/top_p", "expected a number"))
         })
         .transpose()?;
-    let stop = native
+    let stop = remaining
         .remove("stop_sequences")
         .map(|v| {
             array(&v, "/stop_sequences")?
@@ -87,7 +100,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
         thinking: None,
     };
     let mut has_reasoning = false;
-    if let Some(thinking) = native.remove("thinking") {
+    if let Some(thinking) = remaining.remove("thinking") {
         fields(&thinking, &["type", "budget_tokens"], "/thinking")?;
         let mode = match string(&thinking["type"], "/thinking/type")?.as_str() {
             "enabled" => ThinkingMode::Enabled,
@@ -109,7 +122,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
         has_reasoning = true;
     }
     let mut response_format = None;
-    if let Some(config) = native.remove("output_config") {
+    if let Some(config) = remaining.remove("output_config") {
         fields(&config, &["effort", "format"], "/output_config")?;
         if let Some(effort) = config.get("effort").filter(|v| !v.is_null()) {
             let effort = string(effort, "/output_config/effort")?;
@@ -127,14 +140,14 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
             }
             object(&format["schema"], "/output_config/format/schema")?;
             response_format = Some(ResponseFormat::JsonSchema {
-                name: String::new(),
+                name: None,
                 description: None,
                 schema: format["schema"].clone(),
                 strict: None,
             });
         }
     }
-    let definitions = native
+    let definitions = remaining
         .remove("tools")
         .map(|tools| {
             array(&tools, "/tools")?
@@ -188,7 +201,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
         .transpose()?;
     let mut choice = None;
     let mut parallel = None;
-    if let Some(value) = native.remove("tool_choice") {
+    if let Some(value) = remaining.remove("tool_choice") {
         let kind = string(&value["type"], "/tool_choice/type")?;
         fields(
             &value,
@@ -227,29 +240,29 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
     } else {
         None
     };
-    Ok(Input::with_native(
-        ApiFormat::MESSAGES,
-        Request {
-            version: Version::V1,
-            model,
-            messages,
-            tools,
-            parameters: Some(Parameters {
-                max_output_tokens: Some(max_output_tokens),
-                temperature,
-                top_p,
-                stop,
-            }),
-            response_format,
-            reasoning: has_reasoning.then_some(reasoning),
-        },
-        stream,
-        native,
-    ))
+    fields(&Value::Object(remaining), &[], "")?;
+    Ok(Request {
+        version: Version::V1,
+        model,
+        messages,
+        tools,
+        parameters: Some(Parameters {
+            max_output_tokens: Some(max_output_tokens),
+            temperature,
+            top_p,
+            stop,
+        }),
+        response_format,
+        reasoning: has_reasoning.then_some(reasoning),
+        delivery: stream.then_some(Delivery {
+            stream,
+            stream_usage: false,
+        }),
+    })
 }
 
-fn take(native: &mut Map<String, Value>, key: &str) -> Value {
-    native.remove(key).unwrap_or(Value::Null)
+fn take(remaining: &mut Map<String, Value>, key: &str) -> Value {
+    remaining.remove(key).unwrap_or(Value::Null)
 }
 
 fn validate_effort(effort: &str, path: &str) -> Result<(), BridgeError> {
@@ -324,11 +337,10 @@ fn assistant_server_result(message: &Value) -> bool {
 }
 
 pub(super) fn encode(
-    input: &Input,
+    request: &Request,
     options: &ConversionOptions,
     default_max_tokens: Option<u64>,
 ) -> Result<Encoded, BridgeError> {
-    let request = &input.request;
     let parameters = request.parameters.as_ref();
     let max_tokens = parameters
         .and_then(|p| p.max_output_tokens)
@@ -434,7 +446,7 @@ pub(super) fn encode(
     if has_system {
         body["system"] = json!(system);
     }
-    if input.stream {
+    if request.delivery.is_some_and(|delivery| delivery.stream) {
         body["stream"] = json!(true);
     }
     if let Some(parameters) = parameters
@@ -479,7 +491,7 @@ pub(super) fn encode(
             strict,
         }) => {
             for (key, present) in [
-                ("name", !name.is_empty()),
+                ("name", name.is_some()),
                 ("description", description.is_some()),
                 ("strict", strict.is_some()),
             ] {
@@ -556,9 +568,6 @@ pub(super) fn encode(
             }
             body["tool_choice"] = choice;
         }
-    }
-    if let Some(native) = input.native_for(&ApiFormat::MESSAGES) {
-        merge_native(&mut body, native)?;
     }
     Ok(Encoded { body, losses })
 }

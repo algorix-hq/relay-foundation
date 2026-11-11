@@ -1,42 +1,59 @@
-use relay_protocol::{Response, StopReason, Usage, Version};
+use relay_protocol::{Response, StopReason, Timestamp, Usage, Version};
 use serde_json::{Value, json};
 
 use super::{content::*, *};
 
-pub(super) fn decode(body: &[u8]) -> Result<Output, BridgeError> {
-    decode_inner(body).map_err(decode_error)
+pub(super) fn decode(body: &[u8], context: &DecodeContext) -> Result<Response, BridgeError> {
+    decode_inner(body, context).map_err(decode_error)
 }
 
-fn decode_inner(body: &[u8]) -> Result<Output, BridgeError> {
+pub(super) fn response_identity(
+    value: &Value,
+    context: &DecodeContext,
+) -> Result<(String, Option<String>), BridgeError> {
+    let provider_id = optional_string(value, "id", "")?;
+    let id = provider_id
+        .clone()
+        .or_else(|| context.response_id.clone())
+        .ok_or_else(|| {
+            invalid(
+                "/id",
+                "response ID missing and no adapter fallback supplied",
+            )
+        })?;
+    Ok((id, provider_id))
+}
+
+fn decode_inner(body: &[u8], context: &DecodeContext) -> Result<Response, BridgeError> {
     let value: Value = serde_json::from_slice(body).map_err(|e| invalid("", e.to_string()))?;
-    let mut native = object(&value, "")?.clone();
-    let id = string(&value["id"], "/id")?;
+    object(&value, "")?;
+    let (id, provider_id) = response_identity(&value, context)?;
     let model = string(&value["model"], "/model")?;
     let content = array(&value["content"], "/content")?
         .iter()
         .enumerate()
-        .map(|(i, value)| decode_assistant(value, &format!("/content/{i}"), false))
+        .map(|(i, value)| {
+            decode_assistant(value, &format!("/content/{i}"), false, &format!("{id}:{i}"))
+        })
         .collect::<Result<_, _>>()?;
     let stop_reason = decode_stop(&string(&value["stop_reason"], "/stop_reason")?);
     let usage = value
         .get("usage")
         .map(|value| decode_usage(value, "/usage"))
         .transpose()?;
-    for key in ["id", "model", "content", "stop_reason", "usage"] {
-        native.remove(key);
-    }
-    Ok(Output::with_native(
-        ApiFormat::MESSAGES,
-        Response {
-            version: Version::V1,
-            id: Some(id),
-            model,
-            content,
-            stop_reason,
-            usage,
+    Ok(Response {
+        version: Version::V1,
+        id,
+        provider_id,
+        created_at: Timestamp {
+            observed_at: context.observed_at,
+            provider_created_at: None,
         },
-        native,
-    ))
+        model,
+        content,
+        stop_reason,
+        usage,
+    })
 }
 
 pub(super) fn decode_stop(reason: &str) -> StopReason {
@@ -164,35 +181,15 @@ pub(super) fn message(id: &str, model: &str, usage: Value) -> Value {
     })
 }
 
-pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Encoded, BridgeError> {
-    let response = &output.response;
-    let mut native = output
-        .native_for(&ApiFormat::MESSAGES)
-        .cloned()
-        .unwrap_or_default();
-    let id = match native.remove("id") {
-        Some(value) => string(&value, "/id")?,
-        None => response
-            .id
-            .clone()
-            .ok_or_else(|| unrepresentable("/id", "Messages responses require an ID"))?,
-    };
-    let mut body = message(&id, &response.model, encode_usage(response.usage.as_ref())?);
-    for (key, expected) in [("type", "message"), ("role", "assistant")] {
-        if let Some(value) = native.remove(key)
-            && value != expected
-        {
-            return Err(invalid(&pointer("", key), format!("expected {expected}")));
-        }
-    }
-    for key in ["stop_sequence", "container", "diagnostics", "stop_details"] {
-        if let Some(value) = native.remove(key) {
-            body[key] = value;
-        }
-    }
-    if !body["stop_sequence"].is_null() {
-        string(&body["stop_sequence"], "/stop_sequence")?;
-    }
+pub(super) fn encode(
+    response: &Response,
+    options: &ConversionOptions,
+) -> Result<Encoded, BridgeError> {
+    let mut body = message(
+        &response.id,
+        &response.model,
+        encode_usage(response.usage.as_ref())?,
+    );
     let mut losses = Vec::new();
     let mut content = Vec::new();
     for (i, part) in response.content.iter().enumerate() {
@@ -204,6 +201,5 @@ pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Enc
     }
     body["content"] = json!(content);
     body["stop_reason"] = json!(encode_stop(&response.stop_reason)?);
-    merge_native(&mut body, &native)?;
     Ok(Encoded { body, losses })
 }

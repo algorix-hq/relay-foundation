@@ -334,10 +334,19 @@ pub(super) fn decode_assistant(
     value: &Value,
     path: &str,
     strict: bool,
+    id: &str,
 ) -> Result<AssistantContent, BridgeError> {
     let kind = string(&value["type"], &pointer(path, "type"))?;
     match kind.as_str() {
-        "text" => Ok(AssistantContent::Text(decode_text(value, path, strict)?)),
+        "text" => {
+            let part = decode_text(value, path, strict)?;
+            Ok(AssistantContent::Text {
+                id: id.into(),
+                provider_id: None,
+                text: part.text,
+                cache_control: part.cache_control,
+            })
+        }
         "tool_use" => {
             if strict {
                 fields(
@@ -350,7 +359,9 @@ pub(super) fn decode_assistant(
                 .get("input")
                 .ok_or_else(|| invalid(&pointer(path, "input"), "missing tool input"))?;
             Ok(AssistantContent::ToolCall {
-                id: string(&value["id"], &pointer(path, "id"))?,
+                id: id.into(),
+                provider_id: None,
+                call_id: string(&value["id"], &pointer(path, "id"))?,
                 name: string(&value["name"], &pointer(path, "name"))?,
                 arguments: input.to_string(),
                 cache_control: if strict {
@@ -365,7 +376,8 @@ pub(super) fn decode_assistant(
                 fields(value, &["type", "thinking", "signature"], path)?;
             }
             Ok(AssistantContent::Reasoning {
-                id: None,
+                id: id.into(),
+                provider_id: None,
                 text: Some(string(&value["thinking"], &pointer(path, "thinking"))?),
                 summary: Vec::new(),
                 opaque: Some(string(&value["signature"], &pointer(path, "signature"))?),
@@ -376,7 +388,8 @@ pub(super) fn decode_assistant(
                 fields(value, &["type", "data"], path)?;
             }
             Ok(AssistantContent::Reasoning {
-                id: None,
+                id: id.into(),
+                provider_id: None,
                 text: None,
                 summary: Vec::new(),
                 opaque: Some(string(&value["data"], &pointer(path, "data"))?),
@@ -387,6 +400,8 @@ pub(super) fn decode_assistant(
             "assistant block has no neutral representation",
         )),
         _ => Ok(AssistantContent::Unknown {
+            id: id.into(),
+            provider_id: None,
             value: value.clone(),
         }),
     }
@@ -400,9 +415,13 @@ pub(super) fn encode_assistant(
     losses: &mut Vec<ConversionLoss>,
 ) -> Result<Option<Value>, BridgeError> {
     let wire = match part {
-        AssistantContent::Text(part) => {
+        AssistantContent::Text {
+            text,
+            cache_control,
+            ..
+        } => {
             if response {
-                if part.cache_control.is_some() {
+                if cache_control.is_some() {
                     allow_loss(
                         options,
                         losses,
@@ -411,20 +430,29 @@ pub(super) fn encode_assistant(
                         "Messages response text cannot carry cache control",
                     )?;
                 }
-                json!({"type":"text", "text":part.text, "citations":null})
+                json!({"type":"text", "text":text, "citations":null})
             } else {
-                encode_text(part, path, options, losses)?
+                encode_text(
+                    &TextPart {
+                        text: text.clone(),
+                        cache_control: *cache_control,
+                    },
+                    path,
+                    options,
+                    losses,
+                )?
             }
         }
         AssistantContent::ToolCall {
-            id,
+            call_id,
             name,
             arguments,
             cache_control,
+            ..
         } => {
             let input: Value = serde_json::from_str(arguments)
                 .map_err(|e| invalid(&pointer(path, "arguments"), e.to_string()))?;
-            let mut wire = json!({"type":"tool_use", "id":id, "name":name, "input":input});
+            let mut wire = json!({"type":"tool_use", "id":call_id, "name":name, "input":input});
             if response {
                 if cache_control.is_some() {
                     allow_loss(
@@ -451,10 +479,10 @@ pub(super) fn encode_assistant(
             wire
         }
         AssistantContent::Reasoning {
-            id,
             text,
             summary,
             opaque,
+            ..
         } => {
             if !summary.is_empty() {
                 return Err(unrepresentable(
@@ -472,15 +500,6 @@ pub(super) fn encode_assistant(
                 )?;
                 return Ok(None);
             };
-            if id.is_some() {
-                allow_loss(
-                    options,
-                    losses,
-                    LossScope::Reasoning,
-                    &pointer(path, "id"),
-                    "Messages cannot express reasoning item IDs",
-                )?;
-            }
             match text {
                 Some(text) => json!({"type":"thinking", "thinking":text, "signature":opaque}),
                 None => json!({"type":"redacted_thinking", "data":opaque}),

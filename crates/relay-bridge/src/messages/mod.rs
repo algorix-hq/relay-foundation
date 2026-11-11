@@ -18,20 +18,27 @@
 //! Usage detail fields with no neutral counterpart (`cache_creation`,
 //! `inference_geo`, `server_tool_use`, `service_tier`, `speed`) are ignored.
 //! `output_tokens_details.thinking_tokens` maps to reasoning tokens.
-//! Encoding requires provider-supplied usage. The neutral stream exposes usage
-//! only on `Stop`, so the encoder must buffer every frame until that event.
-//! Both `message_start` and `message_delta` use those actual cumulative totals,
-//! not invented initial counters. A stop without usage is unrepresentable.
-//! Reasoning is assembled until its end to distinguish thinking from redacted
-//! thinking, retain the final complete opaque value, and omit unsigned items
-//! atomically when allowed. This adds no wait beyond the required usage gate:
-//! all items must have ended before `Stop` can release any frames.
+//! Top-level response fields without counterparts (`container`, `stop_sequence`,
+//! `stop_details`, `diagnostics`, and future fields) are ignored.
+//! Response IDs use the provider ID or the decode context fallback; timestamps
+//! carry only the context's observed time. Block IDs use `{response_id}:{index}`
+//! with no provider item ID. Request history uses the message JSON path as its
+//! ID namespace. Replay sends tool correlation IDs and opaque values, never item IDs.
+//! Messages always streams usage, so `delivery.stream_usage` is ignored on encoding.
+//! Encoding releases `message_start` with the first response metadata usage before
+//! any item starts. If an item starts first, the whole stream waits for `Stop`
+//! and uses its final usage. Counters are never invented; a stop without usage
+//! is unrepresentable even when provisional usage was received.
+//! Reasoning streams as soon as its kind is known: text starts thinking and an
+//! opaque-only item starts redacted thinking. When reasoning loss is allowed,
+//! unsigned items are buffered until `ItemEnd` and then released or dropped
+//! atomically. Without that permission, an unsigned item errors at `ItemEnd`;
+//! frames already emitted remain emitted.
 //!
 //! Plain text documents use base64 `text/plain` in the neutral media source;
-//! Messages' text source is restored on encoding. JSON schemas use an empty name
-//! on ingress because Messages has no schema-name field. An empty name means
-//! "no name given"; nonempty names, descriptions, and explicit strictness cannot
-//! be encoded without data loss.
+//! Messages' text source is restored on encoding. JSON schemas have no name
+//! on ingress because Messages has no schema-name field. Names, descriptions,
+//! and explicit strictness cannot be encoded without data loss.
 //! Content filtering is not equated to refusal and is rejected on encoding.
 
 mod content;
@@ -39,10 +46,12 @@ mod request;
 mod response;
 mod stream;
 
-use relay_protocol::{ConversionError, ConversionErrorKind, ConversionLoss, DecodeError};
+use relay_protocol::{
+    ConversionError, ConversionErrorKind, ConversionLoss, DecodeError, Request, Response,
+};
 use serde_json::{Map, Value};
 
-use crate::{ApiFormat, Bridge, BridgeError, ConversionOptions, Encoded, Input, LossScope, Output};
+use crate::{ApiFormat, Bridge, BridgeError, ConversionOptions, DecodeContext, Encoded, LossScope};
 
 #[derive(Clone, Debug, Default)]
 pub struct MessagesBridge {
@@ -70,35 +79,44 @@ impl Bridge for MessagesBridge {
         &ApiFormat::MESSAGES
     }
 
-    fn decode_request(&self, body: &[u8]) -> Result<Input, BridgeError> {
+    fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
         request::decode(body)
     }
 
     fn encode_request(
         &self,
-        input: &Input,
+        request: &Request,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        request::encode(input, options, self.default_max_tokens)
+        request::encode(request, options, self.default_max_tokens)
     }
 
-    fn decode_response(&self, body: &[u8]) -> Result<Output, BridgeError> {
-        response::decode(body)
+    fn decode_response(
+        &self,
+        body: &[u8],
+        context: &DecodeContext,
+    ) -> Result<Response, BridgeError> {
+        response::decode(body, context)
     }
 
     fn encode_response(
         &self,
-        output: &Output,
+        _request: &Request,
+        response: &Response,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        response::encode(output, options)
+        response::encode(response, options)
     }
 
-    fn stream_decoder(&self) -> Box<dyn crate::StreamDecoder> {
-        Box::new(stream::Decoder::default())
+    fn stream_decoder(&self, context: &DecodeContext) -> Box<dyn crate::StreamDecoder> {
+        Box::new(stream::Decoder::new(context.clone()))
     }
 
-    fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn crate::StreamEncoder> {
+    fn stream_encoder(
+        &self,
+        _request: &Request,
+        options: &ConversionOptions,
+    ) -> Box<dyn crate::StreamEncoder> {
         Box::new(stream::Encoder::new(options.clone()))
     }
 }
@@ -207,21 +225,5 @@ fn allow_loss(
         path: path.into(),
         message: message.into(),
     });
-    Ok(())
-}
-
-fn merge_native(body: &mut Value, native: &Map<String, Value>) -> Result<(), BridgeError> {
-    let generated = body
-        .as_object_mut()
-        .ok_or_else(|| invalid("", "expected object"))?;
-    for (key, value) in native {
-        if generated.contains_key(key) {
-            return Err(invalid(
-                &pointer("", key),
-                "native field collides with generated field",
-            ));
-        }
-        generated.insert(key.clone(), value.clone());
-    }
     Ok(())
 }

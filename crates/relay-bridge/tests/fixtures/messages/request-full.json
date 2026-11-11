@@ -2,8 +2,6 @@
   "model": "consumer-model",
   "max_tokens": 2048,
   "stream": true,
-  "metadata": {"user_id": "opaque-user"},
-  "service_tier": "standard_only",
   "system": [{"type": "text", "text": "Instructions", "cache_control": {"type": "ephemeral", "ttl": "1h"}}, {"type": "text", "text": "More instructions"}],
   "messages": [
     {"role": "user", "content": [

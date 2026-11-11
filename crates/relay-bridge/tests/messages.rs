@@ -1,17 +1,14 @@
 use std::{fs, path::PathBuf};
 
 use relay_bridge::{
-    ApiFormat, Bridge, BridgeError, ConversionOptions, Frame, Input, LossScope, MessagesBridge,
-    Output,
+    Bridge, BridgeError, ConversionOptions, DecodeContext, Frame, LossScope, MessagesBridge,
 };
 use relay_protocol::{
-    AssistantContent, ConversionErrorKind, Message, Request, StopReason, StreamDelta, StreamEvent,
-    StreamItem, Usage,
+    AssistantContent, ConversionErrorKind, Delivery, Message, MetadataScope, Request, StopReason,
+    StreamDelta, StreamEvent, StreamItem, Timestamp, Usage,
 };
 use serde_json::{Value, json};
 
-// SDK 1.7.0 check.sh types: request-*.json => MessageCreateParams,
-// response-*.json => Message, stream*.json and stream/*.json => RawMessageStreamEvent.
 fn fixture(name: &str) -> Value {
     serde_json::from_slice(
         &fs::read(
@@ -44,13 +41,54 @@ fn stream_fixtures() -> Vec<Value> {
         .collect()
 }
 
-fn protocol_input(overrides: Value) -> Input {
+fn protocol_input(overrides: Value) -> Request {
     let mut request = json!({"version":"1", "model":"consumer-model", "messages":[{"role":"user", "content":[{"type":"text", "text":"Hi"}]}], "parameters":{"max_output_tokens":32}});
     request
         .as_object_mut()
         .expect("request")
         .extend(overrides.as_object().expect("overrides").clone());
-    Input::new(serde_json::from_value::<Request>(request).expect("neutral request"))
+    serde_json::from_value::<Request>(request).expect("neutral request")
+}
+
+fn context() -> DecodeContext {
+    DecodeContext {
+        response_id: Some("fallback".into()),
+        observed_at: 1234,
+    }
+}
+
+fn start() -> StreamEvent {
+    StreamEvent::Start {
+        response_id: "msg_stream".into(),
+        provider_id: None,
+        created_at: Timestamp {
+            observed_at: 1234,
+            provider_created_at: None,
+        },
+        model: Some("consumer-model".into()),
+    }
+}
+
+fn item_start(index: u32, item: StreamItem) -> StreamEvent {
+    StreamEvent::ItemStart {
+        index,
+        id: format!("msg_stream:{index}"),
+        provider_id: None,
+        item,
+    }
+}
+
+fn provisional_usage(input_tokens: u64, output_tokens: u64) -> StreamEvent {
+    StreamEvent::Metadata(MetadataScope::Response {
+        usage: Some(Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            reasoning_tokens: None,
+        }),
+        model: None,
+    })
 }
 
 fn assert_conversion(error: BridgeError, kind: ConversionErrorKind, path: &str) {
@@ -62,7 +100,7 @@ fn assert_conversion(error: BridgeError, kind: ConversionErrorKind, path: &str) 
 }
 
 #[test]
-fn ingress_preserves_system_positions_tools_reasoning_and_native_fields() {
+fn ingress_preserves_system_positions_tools_reasoning_and_delivery() {
     let bridge = MessagesBridge::new();
     for name in [
         "request-full.json",
@@ -81,29 +119,32 @@ fn ingress_preserves_system_positions_tools_reasoning_and_native_fields() {
         let mut input = bridge
             .decode_request(&serde_json::to_vec(&body).expect("JSON"))
             .expect("ingress");
-        let native = input
-            .native_for(&ApiFormat::MESSAGES)
-            .expect("format-scoped native fields");
-        assert!(!native.contains_key("max_tokens"));
-        assert!(!native.contains_key("messages"));
-        assert!(!native.contains_key("thinking"));
         if name == "request-full.json" {
-            assert!(input.stream);
-            assert!(
-                matches!(input.request.response_format.as_ref(), Some(relay_protocol::ResponseFormat::JsonSchema { name, description: None, strict: None, .. }) if name.is_empty())
+            assert_eq!(
+                input.delivery,
+                Some(Delivery {
+                    stream: true,
+                    stream_usage: false
+                })
             );
-            assert_eq!(native["metadata"], body["metadata"]);
-            assert_eq!(native["service_tier"], body["service_tier"]);
-            assert!(input.native_for(&ApiFormat::RESPONSES).is_none());
-            assert!(matches!(input.request.messages[4], Message::System { .. }));
-            let Message::Assistant { content } = &input.request.messages[2] else {
+            assert!(matches!(
+                input.response_format.as_ref(),
+                Some(relay_protocol::ResponseFormat::JsonSchema {
+                    name: None,
+                    description: None,
+                    strict: None,
+                    ..
+                })
+            ));
+            assert!(matches!(input.messages[4], Message::System { .. }));
+            let Message::Assistant { content } = &input.messages[2] else {
                 panic!("assistant")
             };
             assert!(
-                matches!(&content[0], AssistantContent::Reasoning { id: None, text: Some(text), opaque: Some(opaque), .. } if text.is_empty() && opaque == "SIG")
+                matches!(&content[0], AssistantContent::Reasoning { provider_id: None, text: Some(text), opaque: Some(opaque), .. } if text.is_empty() && opaque == "SIG")
             );
             assert!(
-                matches!(&content[1], AssistantContent::Reasoning { id: None, text: None, opaque: Some(opaque), .. } if opaque == "ENC")
+                matches!(&content[1], AssistantContent::Reasoning { provider_id: None, text: None, opaque: Some(opaque), .. } if opaque == "ENC")
             );
         }
         let encoded = bridge
@@ -113,11 +154,11 @@ fn ingress_preserves_system_positions_tools_reasoning_and_native_fields() {
         assert!(encoded.losses.is_empty());
 
         if name == "request-full.json" {
-            let Message::System { content } = input.request.messages.remove(0) else {
+            let Message::System { content } = input.messages.remove(0) else {
                 panic!("leading system")
             };
             for part in content.into_iter().rev() {
-                input.request.messages.insert(
+                input.messages.insert(
                     0,
                     Message::System {
                         content: vec![part],
@@ -134,7 +175,7 @@ fn ingress_preserves_system_positions_tools_reasoning_and_native_fields() {
         }
 
         if name == "request-minimal.json" {
-            input.request.parameters = None;
+            input.parameters = None;
             let encoded = MessagesBridge::with_default_max_tokens(32)
                 .encode_request(&input, &ConversionOptions::default())
                 .expect("consumer default");
@@ -144,8 +185,7 @@ fn ingress_preserves_system_positions_tools_reasoning_and_native_fields() {
 }
 
 #[test]
-fn top_level_fields_without_neutral_counterparts_are_not_allowlisted() {
-    let mut body = fixture("request-minimal.json");
+fn ingress_rejects_top_level_fields_without_protocol_counterparts() {
     for key in [
         "metadata",
         "service_tier",
@@ -156,14 +196,16 @@ fn top_level_fields_without_neutral_counterparts_are_not_allowlisted() {
         "diagnostics",
         "future_option",
     ] {
+        let mut body = fixture("request-minimal.json");
         body[key] = json!({"uninterpreted":true});
+        assert_conversion(
+            MessagesBridge::new()
+                .decode_request(&serde_json::to_vec(&body).expect("JSON"))
+                .expect_err("strict ingress"),
+            ConversionErrorKind::Unrepresentable,
+            &format!("/{key}"),
+        );
     }
-    let input = MessagesBridge::new()
-        .decode_request(&serde_json::to_vec(&body).expect("JSON"))
-        .expect("native ingress");
-    let native = input.native_for(&ApiFormat::MESSAGES).expect("same format");
-    assert_eq!(native.len(), 8);
-    assert_eq!(native["future_option"], json!({"uninterpreted":true}));
 }
 
 #[test]
@@ -288,7 +330,7 @@ fn strict_encoding_names_each_unrepresentable_input_and_structural_error() {
             "/reasoning/summary",
         ),
         (
-            json!({"messages":[{"role":"assistant","content":[{"type":"reasoning","text":"x","summary":["summary"],"opaque":"SIG"}]}]}),
+            json!({"messages":[{"role":"assistant","content":[{"type":"reasoning","id":"r:0","text":"x","summary":["summary"],"opaque":"SIG"}]}]}),
             Unrepresentable,
             "/messages/0/content/0/summary",
         ),
@@ -298,19 +340,14 @@ fn strict_encoding_names_each_unrepresentable_input_and_structural_error() {
             "/messages/0/content/0/detail",
         ),
         (
-            json!({"messages":[{"role":"assistant","content":[{"type":"reasoning","text":"unsigned"}]}]}),
+            json!({"messages":[{"role":"assistant","content":[{"type":"reasoning","id":"r:0","text":"unsigned"}]}]}),
             Unrepresentable,
             "/messages/0/content/0",
         ),
         (
-            json!({"messages":[{"role":"assistant","content":[{"type":"unknown","value":{"type":"future"}}]}]}),
+            json!({"messages":[{"role":"assistant","content":[{"type":"unknown","id":"r:0","value":{"type":"future"}}]}]}),
             Unrepresentable,
             "/messages/0/content/0",
-        ),
-        (
-            json!({"messages":[{"role":"assistant","content":[{"type":"reasoning","id":"item_1","text":"x","opaque":"SIG"}]}]}),
-            Unrepresentable,
-            "/messages/0/content/0/id",
         ),
         (
             json!({"reasoning":{"thinking":"enabled"}}),
@@ -328,7 +365,7 @@ fn strict_encoding_names_each_unrepresentable_input_and_structural_error() {
             "/messages/2",
         ),
         (
-            json!({"messages":[{"role":"assistant","content":[{"type":"tool_call","id":"t","name":"f","arguments":"{"}]}]}),
+            json!({"messages":[{"role":"assistant","content":[{"type":"tool_call","id":"r:0","call_id":"t","name":"f","arguments":"{"}]}]}),
             Invalid,
             "/messages/0/content/0/arguments",
         ),
@@ -339,6 +376,11 @@ fn strict_encoding_names_each_unrepresentable_input_and_structural_error() {
         ),
         (
             json!({"response_format":{"type":"json_schema","name":"named","schema":{}}}),
+            Unrepresentable,
+            "/response_format/name",
+        ),
+        (
+            json!({"response_format":{"type":"json_schema","name":"","schema":{}}}),
             Unrepresentable,
             "/response_format/name",
         ),
@@ -365,7 +407,6 @@ fn permitted_sampling_and_developer_losses_are_reported_separately() {
             &input,
             &ConversionOptions {
                 allow_loss: [LossScope::Sampling, LossScope::DeveloperRole].into(),
-                ..Default::default()
             },
         )
         .expect("explicit loss permission");
@@ -385,36 +426,22 @@ fn permitted_sampling_and_developer_losses_are_reported_separately() {
 }
 
 #[test]
-fn native_fields_never_override_generated_request_or_response_fields() {
-    let input = protocol_input(json!({}));
-    let input = Input::with_native(
-        ApiFormat::MESSAGES,
-        input.request,
-        false,
-        serde_json::Map::from_iter([("model".into(), json!("override"))]),
+fn replay_uses_call_ids_and_opaque_values_never_item_ids() {
+    let input = protocol_input(json!({"messages":[{"role":"assistant","content":[
+        {"type":"tool_call","id":"relay:0","provider_id":"provider-item","call_id":"tool_1","name":"lookup","arguments":"{}"},
+        {"type":"reasoning","id":"relay:1","provider_id":"provider-reasoning","text":"Thought","opaque":"SIG"}
+    ]}]}));
+    let encoded = MessagesBridge::new()
+        .encode_request(&input, &ConversionOptions::default())
+        .expect("replay");
+    assert_eq!(
+        encoded.body["messages"][0]["content"],
+        json!([
+            {"type":"tool_use","id":"tool_1","name":"lookup","input":{}},
+            {"type":"thinking","thinking":"Thought","signature":"SIG"}
+        ])
     );
-    assert_conversion(
-        MessagesBridge::new()
-            .encode_request(&input, &ConversionOptions::default())
-            .expect_err("collision"),
-        ConversionErrorKind::Invalid,
-        "/model",
-    );
-    let output = MessagesBridge::new()
-        .decode_response(&serde_json::to_vec(&fixture("response-end-turn.json")).expect("JSON"))
-        .expect("response");
-    let output = Output::with_native(
-        ApiFormat::MESSAGES,
-        output.response,
-        serde_json::Map::from_iter([("model".into(), json!("override"))]),
-    );
-    assert_conversion(
-        MessagesBridge::new()
-            .encode_response(&output, &ConversionOptions::default())
-            .expect_err("collision"),
-        ConversionErrorKind::Invalid,
-        "/model",
-    );
+    assert!(encoded.losses.is_empty());
 }
 
 #[test]
@@ -422,27 +449,27 @@ fn responses_keep_known_meaning_unknown_blocks_and_normalized_cache_usage() {
     let bridge = MessagesBridge::new();
     let body = fixture("response-full.json");
     let output = bridge
-        .decode_response(&serde_json::to_vec(&body).expect("JSON"))
+        .decode_response(&serde_json::to_vec(&body).expect("JSON"), &context())
         .expect("response");
+    assert!(matches!(&output.content[0], AssistantContent::Text { text, .. } if text == "Answer"));
     assert!(
-        matches!(&output.response.content[0], AssistantContent::Text(part) if part.text == "Answer")
+        matches!(&output.content[1], AssistantContent::ToolCall { arguments, .. } if arguments == "{\"q\":1}")
     );
     assert!(
-        matches!(&output.response.content[1], AssistantContent::ToolCall { arguments, .. } if arguments == "{\"q\":1}")
+        matches!(&output.content[2], AssistantContent::Reasoning { provider_id: None, text: Some(text), opaque: Some(signature), .. } if text == "Thought" && signature == "SIG")
     );
     assert!(
-        matches!(&output.response.content[2], AssistantContent::Reasoning { id: None, text: Some(text), opaque: Some(signature), .. } if text == "Thought" && signature == "SIG")
-    );
-    assert!(
-        matches!(&output.response.content[3], AssistantContent::Reasoning { id: None, text: None, opaque: Some(data), .. } if data == "ENC")
+        matches!(&output.content[3], AssistantContent::Reasoning { provider_id: None, text: None, opaque: Some(data), .. } if data == "ENC")
     );
     assert_eq!(
-        output.response.content[4],
+        output.content[4],
         AssistantContent::Unknown {
+            id: format!("{}:4", output.id),
+            provider_id: None,
             value: body["content"][4].clone()
         }
     );
-    let usage = output.response.usage.as_ref().expect("usage");
+    let usage = output.usage.as_ref().expect("usage");
     assert_eq!(
         (
             usage.input_tokens,
@@ -453,23 +480,32 @@ fn responses_keep_known_meaning_unknown_blocks_and_normalized_cache_usage() {
         ),
         (35, 12, Some(20), Some(5), Some(4))
     );
-    let native = output.native_for(&ApiFormat::MESSAGES).expect("native");
-    assert_eq!(native["type"], "message");
-    assert!(native.contains_key("container"));
-    assert!(!native.contains_key("content"));
+    assert_eq!(output.id, body["id"]);
+    assert_eq!(output.provider_id.as_deref(), body["id"].as_str());
+    assert_eq!(
+        output.created_at,
+        Timestamp {
+            observed_at: 1234,
+            provider_created_at: None
+        }
+    );
     assert_conversion(
         bridge
-            .encode_response(&output, &ConversionOptions::default())
+            .encode_response(
+                &protocol_input(json!({})),
+                &output,
+                &ConversionOptions::default(),
+            )
             .expect_err("unknown output requires permission"),
         ConversionErrorKind::Unrepresentable,
         "/content/4",
     );
     let encoded = bridge
         .encode_response(
+            &protocol_input(json!({})),
             &output,
             &ConversionOptions {
                 allow_loss: [LossScope::UnknownContent].into(),
-                ..Default::default()
             },
         )
         .expect("gateway response");
@@ -498,35 +534,42 @@ fn stop_reasons_round_trip_without_equating_filtering_and_refusal() {
     ] {
         let body = fixture(name);
         let output = bridge
-            .decode_response(&serde_json::to_vec(&body).expect("JSON"))
+            .decode_response(&serde_json::to_vec(&body).expect("JSON"), &context())
             .expect("response");
-        assert_eq!(output.response.stop_reason, expected);
+        assert_eq!(output.stop_reason, expected);
+        let mut expected_body = body;
+        expected_body["stop_sequence"] = Value::Null;
         assert_eq!(
             bridge
-                .encode_response(&output, &ConversionOptions::default())
+                .encode_response(
+                    &protocol_input(json!({})),
+                    &output,
+                    &ConversionOptions::default()
+                )
                 .expect("gateway response")
                 .body,
-            body
+            expected_body
         );
     }
     let mut future = fixture("response-end-turn.json");
     future["stop_reason"] = json!("future_stop");
     let output = bridge
-        .decode_response(&serde_json::to_vec(&future).expect("JSON"))
+        .decode_response(&serde_json::to_vec(&future).expect("JSON"), &context())
         .expect("forward-compatible stop reason");
-    assert_eq!(
-        output.response.stop_reason,
-        StopReason::Other("future_stop".into())
-    );
+    assert_eq!(output.stop_reason, StopReason::Other("future_stop".into()));
     for stop in [
         StopReason::ContentFilter,
         StopReason::Other("future_stop".into()),
     ] {
         let mut output = output.clone();
-        output.response.stop_reason = stop;
+        output.stop_reason = stop;
         assert_conversion(
             bridge
-                .encode_response(&output, &ConversionOptions::default())
+                .encode_response(
+                    &protocol_input(json!({})),
+                    &output,
+                    &ConversionOptions::default(),
+                )
                 .expect_err("unrepresentable stop"),
             ConversionErrorKind::Unrepresentable,
             "/stop_reason",
@@ -539,48 +582,67 @@ fn response_failures_distinguish_bad_bodies_missing_ids_and_impossible_usage() {
     let bridge = MessagesBridge::new();
     for body in [b"not JSON".as_slice(), b"{}", b"{\"content\":42}"] {
         assert!(matches!(
-            bridge.decode_response(body),
+            bridge.decode_response(body, &context()),
             Err(BridgeError::Decode(_))
         ));
     }
     let mut output = bridge
-        .decode_response(&serde_json::to_vec(&fixture("response-end-turn.json")).expect("JSON"))
+        .decode_response(
+            &serde_json::to_vec(&fixture("response-end-turn.json")).expect("JSON"),
+            &context(),
+        )
         .expect("response");
-    output.response.id = None;
-    assert_conversion(
-        bridge
-            .encode_response(&output, &ConversionOptions::default())
-            .expect_err("ID required"),
-        ConversionErrorKind::Unrepresentable,
-        "/id",
-    );
-    let mut native = output
-        .native_for(&ApiFormat::MESSAGES)
-        .expect("native")
-        .clone();
-    native.insert("id".into(), json!("msg_stop"));
-    let mut output = Output::with_native(ApiFormat::MESSAGES, output.response, native);
+    let mut missing_id = fixture("response-end-turn.json");
+    missing_id.as_object_mut().expect("object").remove("id");
+    let fallback = bridge
+        .decode_response(&serde_json::to_vec(&missing_id).expect("JSON"), &context())
+        .expect("fallback identity");
+    assert_eq!(fallback.id, "fallback");
+    assert_eq!(fallback.provider_id, None);
+    assert!(matches!(
+        bridge.decode_response(
+            &serde_json::to_vec(&missing_id).expect("JSON"),
+            &DecodeContext {
+                response_id: None,
+                observed_at: 1
+            }
+        ),
+        Err(BridgeError::Decode(_))
+    ));
+    output.id = "relay-id".into();
     assert_eq!(
         bridge
-            .encode_response(&output, &ConversionOptions::default())
-            .expect("native ID")
-            .body,
-        fixture("response-end-turn.json")
+            .encode_response(
+                &protocol_input(json!({})),
+                &output,
+                &ConversionOptions::default()
+            )
+            .expect("Relay ID")
+            .body["id"],
+        "relay-id"
     );
     let mut without_usage = output.clone();
-    without_usage.response.usage = None;
+    without_usage.usage = None;
     assert_conversion(
         bridge
-            .encode_response(&without_usage, &ConversionOptions::default())
+            .encode_response(
+                &protocol_input(json!({})),
+                &without_usage,
+                &ConversionOptions::default(),
+            )
             .expect_err("usage required"),
         ConversionErrorKind::Unrepresentable,
         "/usage",
     );
-    let usage = output.response.usage.as_mut().expect("usage");
+    let usage = output.usage.as_mut().expect("usage");
     usage.cache_read_tokens = Some(1);
     assert_conversion(
         bridge
-            .encode_response(&output, &ConversionOptions::default())
+            .encode_response(
+                &protocol_input(json!({})),
+                &output,
+                &ConversionOptions::default(),
+            )
             .expect_err("cache subtraction"),
         ConversionErrorKind::Invalid,
         "/usage/input_tokens",
@@ -591,14 +653,13 @@ fn response_failures_distinguish_bad_bodies_missing_ids_and_impossible_usage() {
 fn stream_preserves_text_tool_fragments_signatures_and_cumulative_usage() {
     let bridge = MessagesBridge::new();
     let fixtures = stream_fixtures();
-    let mut decoder = bridge.stream_decoder();
+    let mut decoder = bridge.stream_decoder(&context());
     let mut events = Vec::new();
     for value in &fixtures {
         decoder
             .push(wire_frame(value), &mut events)
             .expect("stream frame");
     }
-    // Ping is documented framing-level keepalive, not a member of SDK RawMessageStreamEvent.
     decoder
         .push(
             Frame {
@@ -612,36 +673,49 @@ fn stream_preserves_text_tool_fragments_signatures_and_cumulative_usage() {
     assert_eq!(
         serde_json::to_value(&events).expect("neutral events"),
         json!([
-            {"type":"response_start","id":"msg_stream","model":"consumer-model"},
-            {"type":"item_start","index":0,"item":{"type":"text"}},
+            {"type":"start","response_id":"msg_stream","provider_id":"msg_stream","created_at":{"observed_at":1234},"model":"consumer-model"},
+            {"type":"metadata","scope":"response","usage":{"input_tokens":35,"output_tokens":1,"cache_read_tokens":20,"cache_write_tokens":5}},
+            {"type":"item_start","index":0,"id":"msg_stream:0","item":{"type":"text"}},
             {"type":"delta","index":0,"delta":{"type":"text","text":"Hello"}},
             {"type":"item_end","index":0},
-            {"type":"item_start","index":1,"item":{"type":"reasoning"}},
+            {"type":"item_start","index":1,"id":"msg_stream:1","item":{"type":"reasoning"}},
             {"type":"delta","index":1,"delta":{"type":"reasoning_text","text":""}},
             {"type":"delta","index":1,"delta":{"type":"reasoning_text","text":"Thought"}},
             {"type":"delta","index":1,"delta":{"type":"reasoning_opaque","value":"SIG"}},
             {"type":"item_end","index":1},
-            {"type":"item_start","index":2,"item":{"type":"reasoning"}},
+            {"type":"item_start","index":2,"id":"msg_stream:2","item":{"type":"reasoning"}},
             {"type":"delta","index":2,"delta":{"type":"reasoning_opaque","value":"ENC"}},
             {"type":"item_end","index":2},
-            {"type":"item_start","index":3,"item":{"type":"tool_call","id":"tool_1","name":"lookup"}},
+            {"type":"item_start","index":3,"id":"msg_stream:3","item":{"type":"tool_call","call_id":"tool_1","name":"lookup"}},
             {"type":"delta","index":3,"delta":{"type":"tool_call_arguments","text":"{\"q\":"}},
             {"type":"delta","index":3,"delta":{"type":"tool_call_arguments","text":"1}"}},
             {"type":"item_end","index":3},
             {"type":"stop","stop_reason":"tool_use","usage":{"input_tokens":35,"output_tokens":12,"cache_read_tokens":20,"cache_write_tokens":5,"reasoning_tokens":4}}
         ])
     );
-    let mut encoder = bridge.stream_encoder(&ConversionOptions::default());
+    let mut encoder =
+        bridge.stream_encoder(&protocol_input(json!({})), &ConversionOptions::default());
     let mut frames = Vec::new();
     let mut losses = Vec::new();
     for event in &events {
         encoder
             .push(event, &mut frames, &mut losses)
             .expect("gateway event");
-        if !matches!(event, StreamEvent::Stop { .. }) {
+        if matches!(event, StreamEvent::Metadata(MetadataScope::Response { .. })) {
+            assert_eq!(frames, [wire_frame(&fixture("stream/00-start.json"))]);
+        }
+        if matches!(event, StreamEvent::Delta { delta: StreamDelta::ReasoningText { text }, .. } if text == "Thought")
+        {
+            let value: Value =
+                serde_json::from_str(&frames.last().expect("thinking frame").data).expect("JSON");
+            assert_eq!(
+                value["delta"],
+                json!({"type":"thinking_delta", "thinking":"Thought"})
+            );
             assert!(
-                frames.is_empty(),
-                "message_start must wait for actual usage"
+                !frames
+                    .iter()
+                    .any(|frame| frame.data.contains("signature_delta"))
             );
         }
     }
@@ -650,36 +724,46 @@ fn stream_preserves_text_tool_fragments_signatures_and_cumulative_usage() {
         .expect("gateway EOF");
     assert!(losses.is_empty());
     let mut expected = fixtures;
-    expected[0] = fixture("stream-encoded-start.json");
     expected[14] = fixture("stream-encoded-delta.json");
     assert_eq!(frames, expected.iter().map(wire_frame).collect::<Vec<_>>());
-    let mut encoder = bridge.stream_encoder(&ConversionOptions::default());
+    let mut encoder =
+        bridge.stream_encoder(&protocol_input(json!({})), &ConversionOptions::default());
     let mut interleaved_frames = Vec::new();
-    for event in events[..5]
+    for event in events[..6]
         .iter()
-        .chain(&events[9..12])
-        .chain(&events[5..9])
-        .chain(&events[12..])
+        .chain(&events[10..13])
+        .chain(&events[6..10])
+        .chain(&events[13..])
     {
         encoder
             .push(event, &mut interleaved_frames, &mut losses)
             .expect("interleaved reasoning");
-        if !matches!(event, StreamEvent::Stop { .. }) {
-            assert!(
-                interleaved_frames.is_empty(),
-                "interleaved frames must wait for actual usage"
-            );
-        }
     }
     encoder
         .finish(&mut interleaved_frames, &mut losses)
         .expect("interleaved EOF");
-    assert_eq!(interleaved_frames, frames);
+    let mut interleaved_decoder = bridge.stream_decoder(&context());
+    let mut interleaved_events = Vec::new();
+    for frame in interleaved_frames {
+        interleaved_decoder
+            .push(frame, &mut interleaved_events)
+            .expect("interleaved frame");
+    }
+    interleaved_decoder
+        .finish(&mut interleaved_events)
+        .expect("interleaved finish");
+    assert_eq!(interleaved_events.last(), events.last());
+    assert!(interleaved_events.contains(&StreamEvent::Delta {
+        index: 1,
+        delta: StreamDelta::ReasoningOpaque {
+            value: "SIG".into()
+        }
+    }));
 }
 
 #[test]
 fn stream_unknowns_keep_raw_values_with_bridge_assigned_indices() {
-    let mut decoder = MessagesBridge::new().stream_decoder();
+    let mut decoder = MessagesBridge::new().stream_decoder(&context());
     let mut events = Vec::new();
     for name in [
         "stream/00-start.json",
@@ -696,14 +780,16 @@ fn stream_unknowns_keep_raw_values_with_bridge_assigned_indices() {
     }
     decoder.finish(&mut events).expect("stop");
     assert_eq!(
-        events[1],
+        events[2],
         StreamEvent::ItemStart {
             index: 0,
+            id: "msg_stream:0".into(),
+            provider_id: None,
             item: StreamItem::Unknown
         }
     );
     assert_eq!(
-        events[2],
+        events[3],
         StreamEvent::Delta {
             index: 0,
             delta: StreamDelta::Unknown {
@@ -712,7 +798,7 @@ fn stream_unknowns_keep_raw_values_with_bridge_assigned_indices() {
         }
     );
     assert_eq!(
-        events[4],
+        events[5],
         StreamEvent::Delta {
             index: 0,
             delta: StreamDelta::Unknown {
@@ -721,7 +807,7 @@ fn stream_unknowns_keep_raw_values_with_bridge_assigned_indices() {
         }
     );
     assert_eq!(
-        events[3],
+        events[4],
         StreamEvent::Delta {
             index: 0,
             delta: StreamDelta::Unknown {
@@ -729,13 +815,13 @@ fn stream_unknowns_keep_raw_values_with_bridge_assigned_indices() {
             }
         }
     );
-    assert_eq!(events[5], StreamEvent::ItemEnd { index: 0 });
+    assert_eq!(events[6], StreamEvent::ItemEnd { index: 0 });
 }
 
 #[test]
 fn incomplete_stream_and_leaked_provider_errors_never_synthesize_completion() {
     let bridge = MessagesBridge::new();
-    let mut decoder = bridge.stream_decoder();
+    let mut decoder = bridge.stream_decoder(&context());
     let mut events = Vec::new();
     for value in stream_fixtures().iter().take(3) {
         decoder
@@ -767,28 +853,20 @@ fn incomplete_stream_and_leaked_provider_errors_never_synthesize_completion() {
 #[test]
 fn stream_encoder_reports_losses_when_the_omission_becomes_known() {
     let bridge = MessagesBridge::new();
-    let mut encoder = bridge.stream_encoder(&ConversionOptions {
-        allow_loss: [LossScope::UnknownContent, LossScope::Reasoning].into(),
-        ..Default::default()
-    });
+    let mut encoder = bridge.stream_encoder(
+        &protocol_input(json!({})),
+        &ConversionOptions {
+            allow_loss: [LossScope::UnknownContent, LossScope::Reasoning].into(),
+        },
+    );
     let mut frames = Vec::new();
     let mut losses = Vec::new();
     encoder
-        .push(
-            &StreamEvent::ResponseStart {
-                id: Some("msg_stream".into()),
-                model: Some("consumer-model".into()),
-            },
-            &mut frames,
-            &mut losses,
-        )
+        .push(&start(), &mut frames, &mut losses)
         .expect("start");
     encoder
         .push(
-            &StreamEvent::ItemStart {
-                index: 0,
-                item: StreamItem::Unknown,
-            },
+            &item_start(0, StreamItem::Unknown),
             &mut frames,
             &mut losses,
         )
@@ -800,10 +878,7 @@ fn stream_encoder_reports_losses_when_the_omission_becomes_known() {
         .expect("dropped item end");
     encoder
         .push(
-            &StreamEvent::ItemStart {
-                index: 1,
-                item: StreamItem::Reasoning { id: None },
-            },
+            &item_start(1, StreamItem::Reasoning),
             &mut frames,
             &mut losses,
         )
@@ -828,10 +903,7 @@ fn stream_encoder_reports_losses_when_the_omission_becomes_known() {
     assert_eq!(losses[1].path, "/items/1");
     assert!(frames.is_empty());
     for event in [
-        StreamEvent::ItemStart {
-            index: 2,
-            item: StreamItem::Text,
-        },
+        item_start(2, StreamItem::Text),
         StreamEvent::Delta {
             index: 2,
             delta: StreamDelta::Text {
@@ -882,18 +954,13 @@ fn stream_encoder_reports_losses_when_the_omission_becomes_known() {
 
 #[test]
 fn stream_encoder_never_releases_frames_without_usage() {
-    let mut encoder = MessagesBridge::new().stream_encoder(&ConversionOptions::default());
+    let mut encoder = MessagesBridge::new()
+        .stream_encoder(&protocol_input(json!({})), &ConversionOptions::default());
     let mut frames = Vec::new();
     let mut losses = Vec::new();
     for event in [
-        StreamEvent::ResponseStart {
-            id: Some("msg_stream".into()),
-            model: Some("consumer-model".into()),
-        },
-        StreamEvent::ItemStart {
-            index: 0,
-            item: StreamItem::Text,
-        },
+        start(),
+        item_start(0, StreamItem::Text),
         StreamEvent::Delta {
             index: 0,
             delta: StreamDelta::Text {
@@ -923,4 +990,314 @@ fn stream_encoder_never_releases_frames_without_usage() {
     );
     assert!(frames.is_empty());
     assert!(losses.is_empty());
+}
+
+#[test]
+fn live_stream_reports_provisional_then_final_usage_without_promoting_metadata() {
+    let recording = include_str!("fixtures/messages_live/stream_usage.sse");
+    let mut frames = Vec::new();
+    for record in recording.split("\n\n").filter(|record| !record.is_empty()) {
+        let event = record
+            .lines()
+            .find_map(|line| line.strip_prefix("event: "))
+            .map(str::to_owned);
+        let data = record
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("recorded data")
+            .into();
+        frames.push(Frame { event, data });
+    }
+    let bridge = MessagesBridge::new();
+    let mut decoder = bridge.stream_decoder(&context());
+    let mut events = Vec::new();
+    for frame in &frames {
+        decoder
+            .push(frame.clone(), &mut events)
+            .expect("recorded frame");
+    }
+    decoder.finish(&mut events).expect("normal finish");
+    assert!(
+        matches!(&events[0], StreamEvent::Start { response_id, provider_id: Some(provider_id), created_at: Timestamp { observed_at: 1234, provider_created_at: None }, .. } if response_id == "msg_011CgvtpzYn9bzLNJr3SVTuh" && response_id == provider_id)
+    );
+    assert!(matches!(
+        &events[1],
+        StreamEvent::Metadata(MetadataScope::Response {
+            usage: Some(Usage {
+                input_tokens: 13,
+                output_tokens: 2,
+                ..
+            }),
+            model: None
+        })
+    ));
+    assert!(matches!(
+        events.last(),
+        Some(StreamEvent::Stop {
+            usage: Some(Usage {
+                input_tokens: 13,
+                output_tokens: 8,
+                ..
+            }),
+            ..
+        })
+    ));
+
+    let mut decoder = bridge.stream_decoder(&context());
+    let mut without_final = Vec::new();
+    for frame in frames {
+        let mut value: Value = serde_json::from_str(&frame.data).expect("JSON");
+        if value["type"] == "message_delta" {
+            value.as_object_mut().expect("object").remove("usage");
+        }
+        decoder
+            .push(wire_frame(&value), &mut without_final)
+            .expect("no final usage");
+    }
+    decoder.finish(&mut without_final).expect("normal finish");
+    assert!(matches!(
+        without_final.last(),
+        Some(StreamEvent::Stop { usage: None, .. })
+    ));
+}
+
+#[test]
+fn cross_format_stream_waits_for_final_usage_even_if_metadata_arrives_after_content() {
+    let bridge = MessagesBridge::new();
+    let mut encoder =
+        bridge.stream_encoder(&protocol_input(json!({})), &ConversionOptions::default());
+    let mut frames = Vec::new();
+    let mut losses = Vec::new();
+    for event in [
+        start(),
+        item_start(0, StreamItem::Text),
+        provisional_usage(99, 1),
+        StreamEvent::Delta {
+            index: 0,
+            delta: StreamDelta::Text {
+                text: "Hello".into(),
+            },
+        },
+        StreamEvent::ItemEnd { index: 0 },
+    ] {
+        encoder
+            .push(&event, &mut frames, &mut losses)
+            .expect("buffered event");
+        assert!(frames.is_empty());
+    }
+    encoder
+        .push(
+            &StreamEvent::Stop {
+                stop_reason: StopReason::ToolUse,
+                usage: Some(Usage {
+                    input_tokens: 35,
+                    output_tokens: 12,
+                    cache_read_tokens: Some(20),
+                    cache_write_tokens: Some(5),
+                    reasoning_tokens: Some(4),
+                }),
+            },
+            &mut frames,
+            &mut losses,
+        )
+        .expect("final usage");
+    encoder.finish(&mut frames, &mut losses).expect("complete");
+    assert_eq!(
+        frames,
+        [
+            "stream-encoded-start.json",
+            "stream/01-text-start.json",
+            "stream/02-text-delta.json",
+            "stream/03-text-stop.json",
+            "stream-encoded-delta.json",
+            "stream/15-stop.json"
+        ]
+        .map(|name| wire_frame(&fixture(name)))
+    );
+    assert!(losses.is_empty());
+}
+
+#[test]
+fn provisional_usage_does_not_make_a_stop_without_final_usage_encodable() {
+    let bridge = MessagesBridge::new();
+    let mut encoder =
+        bridge.stream_encoder(&protocol_input(json!({})), &ConversionOptions::default());
+    let mut frames = Vec::new();
+    let mut losses = Vec::new();
+    for event in [start(), provisional_usage(13, 2)] {
+        encoder
+            .push(&event, &mut frames, &mut losses)
+            .expect("early usage");
+    }
+    assert_eq!(frames.len(), 1);
+    let prior = frames.clone();
+    assert_conversion(
+        encoder
+            .push(
+                &StreamEvent::Stop {
+                    stop_reason: StopReason::EndTurn,
+                    usage: None,
+                },
+                &mut frames,
+                &mut losses,
+            )
+            .expect_err("final usage required"),
+        ConversionErrorKind::Unrepresentable,
+        "/usage",
+    );
+    assert_eq!(frames, prior);
+}
+
+#[test]
+fn unsigned_reasoning_errors_after_streaming_or_is_omitted_atomically_when_allowed() {
+    let bridge = MessagesBridge::new();
+    for allowed in [false, true] {
+        let options = ConversionOptions {
+            allow_loss: if allowed {
+                [LossScope::Reasoning].into()
+            } else {
+                Default::default()
+            },
+        };
+        let mut encoder = bridge.stream_encoder(&protocol_input(json!({})), &options);
+        let mut frames = Vec::new();
+        let mut losses = Vec::new();
+        for event in [
+            start(),
+            provisional_usage(13, 2),
+            item_start(0, StreamItem::Reasoning),
+            StreamEvent::Delta {
+                index: 0,
+                delta: StreamDelta::ReasoningText {
+                    text: "Unsigned".into(),
+                },
+            },
+        ] {
+            encoder
+                .push(&event, &mut frames, &mut losses)
+                .expect("reasoning text");
+        }
+        assert_eq!(frames.len(), if allowed { 1 } else { 3 });
+        let prior = frames.clone();
+        let end = encoder.push(&StreamEvent::ItemEnd { index: 0 }, &mut frames, &mut losses);
+        if allowed {
+            end.expect("permitted omission");
+            assert_eq!(losses.len(), 1);
+            assert_eq!(losses[0].path, "/items/0");
+        } else {
+            assert_conversion(
+                end.expect_err("unsigned thinking"),
+                ConversionErrorKind::Unrepresentable,
+                "/items/0",
+            );
+            assert!(losses.is_empty());
+        }
+        assert_eq!(frames, prior);
+    }
+}
+
+#[test]
+fn signed_reasoning_with_loss_permission_waits_until_item_end_and_preserves_empty_text() {
+    let bridge = MessagesBridge::new();
+    let mut encoder = bridge.stream_encoder(
+        &protocol_input(json!({})),
+        &ConversionOptions {
+            allow_loss: [LossScope::Reasoning].into(),
+        },
+    );
+    let mut frames = Vec::new();
+    let mut losses = Vec::new();
+    for event in [
+        start(),
+        provisional_usage(13, 2),
+        item_start(0, StreamItem::Reasoning),
+        StreamEvent::Delta {
+            index: 0,
+            delta: StreamDelta::ReasoningText {
+                text: String::new(),
+            },
+        },
+        StreamEvent::Delta {
+            index: 0,
+            delta: StreamDelta::ReasoningOpaque {
+                value: "SIG".into(),
+            },
+        },
+    ] {
+        encoder
+            .push(&event, &mut frames, &mut losses)
+            .expect("buffered signed thinking");
+        assert!(frames.len() <= 1);
+    }
+    encoder
+        .push(&StreamEvent::ItemEnd { index: 0 }, &mut frames, &mut losses)
+        .expect("release reasoning");
+    let values: Vec<Value> = frames
+        .iter()
+        .map(|frame| serde_json::from_str(&frame.data).expect("JSON"))
+        .collect();
+    assert_eq!(values[1]["content_block"]["type"], "thinking");
+    assert_eq!(
+        values[2]["delta"],
+        json!({"type":"thinking_delta","thinking":""})
+    );
+    assert_eq!(
+        values[3]["delta"],
+        json!({"type":"signature_delta","signature":"SIG"})
+    );
+    assert!(losses.is_empty());
+}
+
+#[test]
+fn tool_start_waits_for_partial_metadata_and_uses_call_id_not_provider_item_id() {
+    let bridge = MessagesBridge::new();
+    let mut encoder =
+        bridge.stream_encoder(&protocol_input(json!({})), &ConversionOptions::default());
+    let mut frames = Vec::new();
+    let mut losses = Vec::new();
+    for event in [
+        start(),
+        provisional_usage(13, 2),
+        item_start(
+            0,
+            StreamItem::ToolCall {
+                call_id: None,
+                name: None,
+            },
+        ),
+        StreamEvent::Delta {
+            index: 0,
+            delta: StreamDelta::ToolCallArguments { text: "{}".into() },
+        },
+        StreamEvent::Metadata(MetadataScope::Item {
+            index: 0,
+            provider_id: Some("provider-item".into()),
+            call_id: Some("tool_1".into()),
+            name: None,
+        }),
+    ] {
+        encoder
+            .push(&event, &mut frames, &mut losses)
+            .expect("partial tool metadata");
+        assert!(frames.len() <= 1);
+    }
+    encoder
+        .push(
+            &StreamEvent::Metadata(MetadataScope::Item {
+                index: 0,
+                provider_id: None,
+                call_id: None,
+                name: Some("lookup".into()),
+            }),
+            &mut frames,
+            &mut losses,
+        )
+        .expect("tool name");
+    assert_eq!(frames.len(), 3);
+    let block: Value = serde_json::from_str(&frames[1].data).expect("JSON");
+    assert_eq!(block["content_block"]["id"], "tool_1");
+    assert_eq!(block["content_block"]["name"], "lookup");
+    encoder
+        .push(&StreamEvent::ItemEnd { index: 0 }, &mut frames, &mut losses)
+        .expect("tool end");
 }
