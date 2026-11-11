@@ -4,6 +4,8 @@ use relay_protocol::RelayError;
 use crate::Headers;
 
 /// Client-format wire mapping for already-normalized errors; never classifies failures.
+/// Built-ins return upstream IDs only as `x-relay-upstream-request-id`, never as
+/// the client format's own request-ID header. Retry-After dates remain verbatim.
 pub trait ErrorEncoder: Send + Sync {
     /// Encodes an error before the client response has started.
     fn encode_error(&self, error: &RelayError, stage: Stage) -> EncodedError;

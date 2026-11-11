@@ -484,6 +484,34 @@ impl StreamEncoder for GatewayJsonEncoder {
 
 # 3. Adapter (`relay-adapter`)
 
+## 내장 Adapter
+
+```rust
+use std::sync::Arc;
+use relay_adapter::{AnthropicAdapter, OpenAiAdapter, OpenAiCompatibleAdapter};
+use relay_bridge::{ChatCompletionsBridge, LossScope, MessagesBridge};
+
+let anthropic = AnthropicAdapter::new("anthropic-key")
+    .base_url("https://api.anthropic.com")
+    .version("2026-10-21")
+    .with_bridge(Arc::new(MessagesBridge::with_default_max_tokens(4096)))?
+    .allow_loss([LossScope::Sampling, LossScope::DeveloperRole])
+    .with_id_generator(|| "relay-response".into())
+    .with_clock(|| 1235);
+
+let responses = OpenAiAdapter::new("openai-key")
+    .base_url("https://api.openai.com/v1")
+    .organization("org-example")
+    .project("proj-example");
+let chat = OpenAiAdapter::new("openai-key")
+    .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
+
+let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1")
+    .api_key("ollama-key")
+    .without_tool_choice();
+let local = OpenAiCompatibleAdapter::new("http://localhost:11434/v1");
+```
+
 ## 소비자 HTTP 전송
 
 ```rust
@@ -549,7 +577,7 @@ async fn complete(
     http: &reqwest::Client, client_body: &[u8],
 ) -> Result<Encoded, GatewayError> {
     let client = ChatCompletionsBridge::new();
-    let adapter = AnthropicAdapter::new("sk-test")?;
+    let adapter = AnthropicAdapter::new("sk-test");
     let input = client.decode_request(client_body)?;
     let (request, request_losses) = adapter.build_request(&input)?;
     for loss in request_losses { eprintln!("요청 생략: {loss}"); }
@@ -643,6 +671,16 @@ async fn collect_before_reply(
 ```
 
 ## 오류 응답
+
+```rust
+use relay_adapter::{ChatCompletionsErrors, ErrorEncoder, MessagesErrors, ResponsesErrors, Stage};
+
+let chat_errors = ChatCompletionsErrors::new();
+let responses_errors = ResponsesErrors::new();
+let messages_errors = MessagesErrors::new();
+let http_error = messages_errors.encode_error(&error, Stage::Response);
+let stream_error = responses_errors.encode_stream_error(&error);
+```
 
 ```rust
 use relay_adapter::{EncodedError, ErrorEncoder, Stage};
@@ -874,21 +912,21 @@ assert_eq!(context.observed_at, 1235);
 ```json
 [
   {"상황":"요청의 Unknown 콘텐츠를 손실 허용 없이 인코딩","결과":"Conversion(Unrepresentable)","클라이언트":"요청 단계 400"},
-  {"상황":"bridge와 어댑터의 API 형식 불일치","결과":"Configuration","클라이언트":"소비자 설정 오류 정책"},
-  {"상황":"503의 비JSON 오류 본문, 테스트 어댑터가 busy로 분류","결과":"Provider(Overloaded)","http_status":503,"클라이언트":"결과 단계 502"},
-  {"상황":"200의 제공자 오류 본문","결과":"Provider(Overloaded)","http_status":200,"클라이언트":"결과 단계 502"},
+  {"상황":"bridge와 어댑터의 API 형식 불일치","결과":"Configuration","클라이언트":"500"},
+  {"상황":"503의 비JSON 오류 본문","결과":"Provider(ServerError)","http_status":503,"클라이언트":"500"},
+  {"상황":"200의 명시적 과부하 오류 본문","결과":"Provider(Overloaded)","http_status":200,"클라이언트":"Chat Completions/Responses 503; Messages 529"},
   {"상황":"비성공 HTTP를 어댑터가 잘못 성공 처리","결과":"Provider(Unknown)","클라이언트":"결과 단계 502; 원래 상태 보존"},
   {"상황":"200의 잘못된 성공 본문","결과":"Decode","클라이언트":"결과 단계 502"},
-  {"상황":"스트림 HTTP 429, 빈 본문을 classify","결과":"Provider(Overloaded) 또는 Provider(Unknown)","http_status":429,"클라이언트":"응답 시작 전 결과 단계 502"},
-  {"상황":"정상 데이터 뒤 제공자 오류 프레임","결과":"이전 이벤트 뒤 Provider(Overloaded)","http_status":null,"클라이언트":"이전 프레임 뒤 relay-error; 합성 stop 없음"},
-  {"상황":"같은 정상 프레임 안에서 이벤트 해석 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 relay-error"},
-  {"상황":"정상 프레임 뒤 framing 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 relay-error"},
-  {"상황":"정상 EOF인데 stop 없음","결과":"버퍼 이벤트 뒤 IncompleteStream","클라이언트":"이전 프레임 뒤 relay-error; 합성 완료 없음"},
-  {"상황":"클라이언트 인코더 push가 일부 출력 후 실패","결과":"Conversion","클라이언트":"부분 출력 뒤 relay-error"},
-  {"상황":"클라이언트 인코더 finish가 꼬리 출력 후 실패","결과":"Conversion","클라이언트":"꼬리 출력 뒤 relay-error"},
+  {"상황":"스트림 HTTP 429, 빈 본문을 classify","결과":"Provider(RateLimited)","http_status":429,"클라이언트":"응답 시작 전 429"},
+  {"상황":"정상 데이터 뒤 제공자 오류 프레임","결과":"이전 이벤트 뒤 Provider(Overloaded)","http_status":null,"클라이언트":"이전 프레임 뒤 형식별 오류 프레임; 합성 stop 없음"},
+  {"상황":"같은 정상 프레임 안에서 이벤트 해석 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 형식별 오류 프레임"},
+  {"상황":"정상 프레임 뒤 framing 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 형식별 오류 프레임"},
+  {"상황":"정상 EOF인데 stop 없음","결과":"버퍼 이벤트 뒤 IncompleteStream","클라이언트":"이전 프레임 뒤 형식별 오류 프레임; 합성 완료 없음"},
+  {"상황":"클라이언트 인코더 push가 일부 출력 후 실패","결과":"Conversion","클라이언트":"부분 출력 뒤 형식별 오류 프레임"},
+  {"상황":"클라이언트 인코더 finish가 꼬리 출력 후 실패","결과":"Conversion","클라이언트":"꼬리 출력 뒤 형식별 오류 프레임"},
   {"상황":"정상 stop·finish, 허용한 생략 있음","결과":"Outcome::Completed와 손실 목록","클라이언트":"정상 프레임과 인코더 꼬리 출력"},
   {"상황":"전송 단절·취소, finish 없이 drop","outcome":null,"클라이언트":"자동 프레임 없음; Transport/Cancelled는 소비자 처리"},
-  {"상황":"모델 탐색 미지원","결과":"UnsupportedOperation(list_models)","클라이언트":"소비자 미지원 정책"},
+  {"상황":"모델 탐색 미지원","결과":"UnsupportedOperation(list_models)","클라이언트":"501"},
   {"상황":"빈 모델 페이지와 다음 커서","결과":"ModelPage","클라이언트":"정상 목록 응답"}
 ]
 ```

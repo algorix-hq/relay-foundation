@@ -1,14 +1,21 @@
 //! Adapter-owned request construction, provider error classification, and optional discovery.
 //! Consumer operations unify Relay failures while transport and cancellation remain consumer-owned.
 
+mod builtins;
+mod classification;
 mod conversion;
+mod encoders;
 mod error;
 mod http;
+mod sse;
 mod stream;
 
+pub use builtins::*;
 pub use conversion::*;
+pub use encoders::*;
 pub use error::*;
 pub use http::*;
+pub use sse::SseDecoder;
 pub use stream::*;
 
 use std::fmt;
@@ -37,6 +44,11 @@ pub trait FrameDecoder: Send {
 
 pub trait Adapter: Send + Sync {
     fn conversion(&self) -> &Conversion;
+
+    /// Checks consumer-declared server restrictions before bridge conversion.
+    fn validate_request(&self, _request: &Request) -> Result<(), ConfigurationError> {
+        Ok(())
+    }
 
     fn assemble_request(
         &self,
@@ -117,6 +129,7 @@ impl<A: Adapter + ?Sized> AdapterExt for A {
         &self,
         request: &Request,
     ) -> Result<(ProviderRequest, Vec<ConversionLoss>), RelayError> {
+        self.validate_request(request)?;
         let conversion = self.conversion();
         let encoded = conversion
             .bridge()

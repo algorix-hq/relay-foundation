@@ -32,7 +32,11 @@ impl Conversion {
                 ),
             });
         }
-        Ok(Self {
+        Ok(Self::from_bridge(bridge, options))
+    }
+
+    pub(crate) fn from_bridge(bridge: Arc<dyn Bridge>, options: ConversionOptions) -> Self {
+        Self {
             bridge,
             options,
             id_generator: Arc::new(|| uuid::Uuid::new_v4().to_string()),
@@ -42,7 +46,21 @@ impl Conversion {
                     .unwrap_or_default()
                     .as_secs()
             }),
-        })
+        }
+    }
+
+    pub(crate) fn replace_bridge(
+        &mut self,
+        bridge: Arc<dyn Bridge>,
+        supported_formats: &[ApiFormat],
+    ) -> Result<(), ConfigurationError> {
+        let checked = Self::new(bridge, supported_formats, self.options.clone())?;
+        self.bridge = checked.bridge;
+        Ok(())
+    }
+
+    pub(crate) fn allow_loss(&mut self, scopes: impl IntoIterator<Item = relay_bridge::LossScope>) {
+        self.options.allow_loss.extend(scopes);
     }
 
     pub fn with_id_generator(
