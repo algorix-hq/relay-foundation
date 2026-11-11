@@ -363,13 +363,9 @@ impl StreamEncoder for Encoder {
                     return Err(invalid("", "Start required before metadata"));
                 }
                 match scope {
-                    MetadataScope::Response { usage, model } => {
-                        if usage.is_some() {
-                            return Err(unrepresentable(
-                                "/usage",
-                                "provisional usage has no Chat Completions representation",
-                            ));
-                        }
+                    // Provisional usage is skipped: this format sends only final
+                    // usage, which still arrives on Stop, so no fact is lost.
+                    MetadataScope::Response { model, .. } => {
                         if let Some(model) = model {
                             if let Some(header) = &mut self.header {
                                 header["model"] = json!(model);

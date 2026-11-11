@@ -1,0 +1,5 @@
+{
+  "id": "msg_stream", "created": 1700000123, "model": "consumer-model",
+  "object": "chat.completion.chunk",
+  "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": null}]
+}

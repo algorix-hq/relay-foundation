@@ -1,0 +1,24 @@
+{
+  "id": "msg_full",
+  "created": 1700000123,
+  "model": "consumer-model",
+  "object": "chat.completion",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "Answer",
+      "refusal": null,
+      "tool_calls": [{"id": "tool_1", "type": "function", "function": {"name": "lookup", "arguments": "{\"q\":1}"}}]
+    },
+    "finish_reason": "tool_calls",
+    "logprobs": null
+  }],
+  "usage": {
+    "prompt_tokens": 35,
+    "completion_tokens": 12,
+    "total_tokens": 47,
+    "prompt_tokens_details": {"cached_tokens": 20, "cache_write_tokens": 5},
+    "completion_tokens_details": {"reasoning_tokens": 4}
+  }
+}

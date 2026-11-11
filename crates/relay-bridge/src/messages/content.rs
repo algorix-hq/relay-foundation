@@ -479,11 +479,22 @@ pub(super) fn encode_assistant(
             wire
         }
         AssistantContent::Reasoning {
+            provider_id,
             text,
             summary,
             opaque,
             ..
         } => {
+            if !response && provider_id.is_some() {
+                allow_loss(
+                    options,
+                    losses,
+                    LossScope::Reasoning,
+                    path,
+                    "Messages cannot replay reasoning with a provider item ID",
+                )?;
+                return Ok(None);
+            }
             if !summary.is_empty() {
                 return Err(unrepresentable(
                     &pointer(path, "summary"),

@@ -24,6 +24,8 @@
 //! carry only the context's observed time. Block IDs use `{response_id}:{index}`
 //! with no provider item ID. Request history uses the message JSON path as its
 //! ID namespace. Replay sends tool correlation IDs and opaque values, never item IDs.
+//! Request reasoning with a provider item ID requires explicit Reasoning loss
+//! permission: Messages has no such replay identity and cannot interpret its opaque value.
 //! Messages always streams usage, so `delivery.stream_usage` is ignored on encoding.
 //! Encoding releases `message_start` with the first response metadata usage before
 //! any item starts. If an item starts first, the whole stream waits for `Stop`

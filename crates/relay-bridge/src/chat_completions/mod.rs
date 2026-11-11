@@ -12,8 +12,8 @@
 //! Item IDs are not supplied by this format; tool-call IDs are correlation IDs.
 //! Historical assistant items use the message's JSON path as a deterministic ID
 //! namespace because request history has no response envelope.
-//! Provisional usage cannot be encoded: this format's usage chunks represent final
-//! totals, so response usage metadata is rejected rather than promoted to final.
+//! Provisional usage metadata is skipped without a loss report: this format sends
+//! only final usage, which still arrives on `Stop`, so no fact is lost.
 //! Only `[DONE]` establishes a normal stream finish, even after a finish reason.
 //! The prescribed stop-reason mappings coarsen termination categories rather than
 //! omit content; they do not require a loss scope or produce omission reports.

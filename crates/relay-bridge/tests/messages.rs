@@ -429,7 +429,7 @@ fn permitted_sampling_and_developer_losses_are_reported_separately() {
 fn replay_uses_call_ids_and_opaque_values_never_item_ids() {
     let input = protocol_input(json!({"messages":[{"role":"assistant","content":[
         {"type":"tool_call","id":"relay:0","provider_id":"provider-item","call_id":"tool_1","name":"lookup","arguments":"{}"},
-        {"type":"reasoning","id":"relay:1","provider_id":"provider-reasoning","text":"Thought","opaque":"SIG"}
+        {"type":"reasoning","id":"relay:1","text":"Thought","opaque":"SIG"}
     ]}]}));
     let encoded = MessagesBridge::new()
         .encode_request(&input, &ConversionOptions::default())
