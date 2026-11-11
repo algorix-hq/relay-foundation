@@ -25,13 +25,6 @@ fn encoders() -> [(&'static str, Box<dyn ErrorEncoder>); 3] {
     ]
 }
 
-fn sdk_output(format: &str, stream: bool, body: &Value) {
-    println!(
-        "\nSDK_OUTPUT {}",
-        json!({"format":format,"stream":stream,"body":body})
-    );
-}
-
 #[test]
 fn category_by_format_uses_neutral_statuses_and_never_forwards_foreign_codes_or_ids() {
     for (format, encoder) in encoders() {
@@ -147,7 +140,6 @@ fn category_by_format_uses_neutral_statuses_and_never_forwards_foreign_codes_or_
                 encoded.headers.get("content-type"),
                 Some("application/json")
             );
-            sdk_output(format, false, &body);
 
             let frames = encoder.encode_stream_error(&error);
             assert_eq!(frames.len(), 1);
@@ -169,7 +161,6 @@ fn category_by_format_uses_neutral_statuses_and_never_forwards_foreign_codes_or_
                     expected
                 }
             );
-            sdk_output(format, true, &body);
         }
         assert_eq!(
             encoder
@@ -244,12 +235,10 @@ fn local_failures_use_stage_only_for_conversion_and_remain_sdk_encodable() {
                         "server_error"
                     }
                 );
-                sdk_output(format, false, &body);
             }
             let frames = encoder.encode_stream_error(&error);
             assert_eq!(frames.len(), 1);
-            let body: Value = serde_json::from_str(&frames[0].data).expect("JSON");
-            sdk_output(format, true, &body);
+            serde_json::from_str::<Value>(&frames[0].data).expect("stream error frame is JSON");
         }
     }
 }
