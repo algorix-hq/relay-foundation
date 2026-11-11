@@ -15,7 +15,7 @@
 //! Provider response and item IDs become both Relay IDs and provider_id; missing IDs
 //! use DecodeContext.response_id and `{response_id}:{index}`, respectively.
 //! Timestamps retain observed_at and optional provider_created_at independently.
-//! OpenAPI permits numeric created_at; live gpt-5-nano returned integer 1794399223; fractional values fail Decode without truncation.
+//! OpenAPI permits numeric created_at; live gpt-6-luna returned integer 1794402281; fractional values fail Decode without truncation.
 //! Multiple response reasoning-text segments are concatenated in wire order;
 //! ingress rejects multiple segments because their boundaries cannot be retained.
 //! Reasoning input status and other unrepresented item metadata are rejected on ingress.

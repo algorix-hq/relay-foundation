@@ -27,7 +27,7 @@ fn frame(value: Value) -> Frame {
 }
 
 fn input(extra: Value) -> Request {
-    let mut value = json!({"version":"1", "model":"gpt-5-nano", "messages":[]});
+    let mut value = json!({"version":"1", "model":"gpt-6-luna", "messages":[]});
     value
         .as_object_mut()
         .expect("request")
@@ -152,7 +152,7 @@ fn ingress_rejects_unrepresented_fields_and_reports_malformed_fields() {
         ),
     ];
     for (extra, kind, path) in cases {
-        let mut body = json!({"model":"gpt-5-nano"});
+        let mut body = json!({"model":"gpt-6-luna"});
         body.as_object_mut()
             .expect("body")
             .extend(extra.as_object().expect("extra").clone());
@@ -587,7 +587,7 @@ fn events() -> Vec<StreamEvent> {
         StreamEvent::Start {
             response_id: "resp_stream".into(),
             provider_id: Some("resp_stream".into()),
-            model: Some("gpt-5-nano".into()),
+            model: Some("gpt-6-luna".into()),
             created_at: Timestamp {
                 observed_at: 1700000001,
                 provider_created_at: Some(1700000000),

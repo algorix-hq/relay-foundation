@@ -1018,14 +1018,14 @@ fn live_stream_reports_provisional_then_final_usage_without_promoting_metadata()
     }
     decoder.finish(&mut events).expect("normal finish");
     assert!(
-        matches!(&events[0], StreamEvent::Start { response_id, provider_id: Some(provider_id), created_at: Timestamp { observed_at: 1234, provider_created_at: None }, .. } if response_id == "msg_011CgvtpzYn9bzLNJr3SVTuh" && response_id == provider_id)
+        matches!(&events[0], StreamEvent::Start { response_id, provider_id: Some(provider_id), created_at: Timestamp { observed_at: 1234, provider_created_at: None }, .. } if response_id == "msg_011CgwBt2zw4NebdkzpfH3PY" && response_id == provider_id)
     );
     assert!(matches!(
         &events[1],
         StreamEvent::Metadata(MetadataScope::Response {
             usage: Some(Usage {
-                input_tokens: 13,
-                output_tokens: 2,
+                input_tokens: 16,
+                output_tokens: 4,
                 ..
             }),
             model: None
@@ -1035,8 +1035,8 @@ fn live_stream_reports_provisional_then_final_usage_without_promoting_metadata()
         events.last(),
         Some(StreamEvent::Stop {
             usage: Some(Usage {
-                input_tokens: 13,
-                output_tokens: 8,
+                input_tokens: 16,
+                output_tokens: 16,
                 ..
             }),
             ..

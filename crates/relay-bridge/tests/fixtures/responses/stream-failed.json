@@ -5,7 +5,7 @@
     "id": "resp_failed",
     "object": "response",
     "created_at": 1700000000,
-    "model": "gpt-5-nano",
+    "model": "gpt-6-luna",
     "status": "failed",
     "error": {
       "code": "server_error",

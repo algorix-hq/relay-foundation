@@ -2,7 +2,7 @@
   "type":"response.in_progress", "sequence_number":1,
   "response":{
     "id":"resp_stream", "object":"response", "created_at":1700000000,
-    "model":"gpt-5-nano", "status":"in_progress", "error":null,
+    "model":"gpt-6-luna", "status":"in_progress", "error":null,
     "incomplete_details":null, "access_programs":null, "instructions":null,
     "metadata":{}, "parallel_tool_calls":true, "temperature":null, "top_p":null,
     "tool_choice":"auto", "tools":[], "output_text":"", "output":[]

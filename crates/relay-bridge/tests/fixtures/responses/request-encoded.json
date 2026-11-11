@@ -1,5 +1,5 @@
 {
-  "model": "gpt-5-nano",
+  "model": "gpt-6-luna",
   "input": [
     {
       "type": "message",

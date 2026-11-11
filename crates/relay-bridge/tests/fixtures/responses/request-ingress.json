@@ -1,5 +1,5 @@
 {
-  "model": "gpt-5-nano",
+  "model": "gpt-6-luna",
   "instructions": "Follow the policy",
   "input": [
     {"type":"message","role":"developer","content":[{"type":"input_text","text":"Use tools"}]},

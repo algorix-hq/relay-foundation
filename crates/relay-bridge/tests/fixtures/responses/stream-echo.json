@@ -2,7 +2,7 @@
   "type":"response.created", "sequence_number":0,
   "response":{
     "id":"resp_stream", "object":"response", "created_at":1700000000,
-    "model":"gpt-5-nano", "status":"in_progress", "error":null,
+    "model":"gpt-6-luna", "status":"in_progress", "error":null,
     "incomplete_details":null, "access_programs":null, "instructions":null, "metadata":{},
     "tools":[{"type":"function","name":"lookup","description":"Look up a key","parameters":{"type":"object","properties":{"key":{"type":"integer"}}},"strict":true}],
     "tool_choice":{"type":"function","name":"lookup"}, "parallel_tool_calls":true,

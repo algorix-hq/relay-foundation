@@ -5,7 +5,7 @@
     "id": "resp_stream",
     "object": "response",
     "created_at": 1700000000,
-    "model": "gpt-5-nano",
+    "model": "gpt-6-luna",
     "status": "completed",
     "error": null,
     "incomplete_details": null,
