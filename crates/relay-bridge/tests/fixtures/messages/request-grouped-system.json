@@ -1,0 +1,1 @@
+{"model":"consumer-model","max_tokens":32,"messages":[{"role":"user","content":[{"type":"text","text":"Hi"}]},{"role":"system","content":[{"type":"text","text":"One"}]},{"role":"system","content":[{"type":"text","text":"Two"}]},{"role":"assistant","content":[{"type":"text","text":"Noted"}]}]}

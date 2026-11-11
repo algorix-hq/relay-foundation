@@ -8,6 +8,7 @@ pub mod responses;
 
 pub use chat_completions::ChatCompletionsBridge;
 pub use error::BridgeError;
+pub use messages::MessagesBridge;
 
 use std::{borrow::Cow, collections::BTreeSet, fmt};
 
