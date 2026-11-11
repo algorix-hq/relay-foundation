@@ -6,6 +6,14 @@
 //! for total, audio, image, text, and accepted/rejected prediction tokens. Refusals are retained
 //! as unknown content, not converted into text. Stream-only moderation, obfuscation,
 //! service tier and fingerprint metadata have no stream-event counterpart.
+//! Top-level response fields without protocol counterparts, including service_tier,
+//! system_fingerprint, and future fields, are ignored rather than retained.
+//! New fields inside recognized response items are also ignored.
+//! Item IDs are not supplied by this format; tool-call IDs are correlation IDs.
+//! Historical assistant items use the message's JSON path as a deterministic ID
+//! namespace because request history has no response envelope.
+//! Provisional usage cannot be encoded: this format's usage chunks represent final
+//! totals, so response usage metadata is rejected rather than promoted to final.
 //! Only `[DONE]` establishes a normal stream finish, even after a finish reason.
 //! The prescribed stop-reason mappings coarsen termination categories rather than
 //! omit content; they do not require a loss scope or produce omission reports.
@@ -17,11 +25,13 @@ mod request;
 mod response;
 mod stream;
 
-use relay_protocol::{ConversionError, ConversionErrorKind, ConversionLoss, DecodeError};
+use relay_protocol::{
+    ConversionError, ConversionErrorKind, ConversionLoss, DecodeError, Request, Response,
+};
 use serde_json::{Map, Value};
 
 use crate::{
-    ApiFormat, Bridge, BridgeError, ConversionOptions, Encoded, Input, LossScope, Output,
+    ApiFormat, Bridge, BridgeError, ConversionOptions, DecodeContext, Encoded, LossScope,
     StreamDecoder, StreamEncoder,
 };
 
@@ -50,30 +60,39 @@ impl Bridge for ChatCompletionsBridge {
     fn format(&self) -> &ApiFormat {
         &ApiFormat::CHAT_COMPLETIONS
     }
-    fn decode_request(&self, body: &[u8]) -> Result<Input, BridgeError> {
+    fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
         request::decode(body)
     }
     fn encode_request(
         &self,
-        input: &Input,
+        request: &Request,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        request::encode(input, options, self.max_tokens_field)
+        request::encode(request, options, self.max_tokens_field)
     }
-    fn decode_response(&self, body: &[u8]) -> Result<Output, BridgeError> {
-        response::decode(body)
+    fn decode_response(
+        &self,
+        body: &[u8],
+        context: &DecodeContext,
+    ) -> Result<Response, BridgeError> {
+        response::decode(body, context)
     }
     fn encode_response(
         &self,
-        output: &Output,
+        _request: &Request,
+        response: &Response,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        response::encode(output, options)
+        response::encode(response, options)
     }
-    fn stream_decoder(&self) -> Box<dyn StreamDecoder> {
-        Box::new(stream::Decoder::default())
+    fn stream_decoder(&self, context: &DecodeContext) -> Box<dyn StreamDecoder> {
+        Box::new(stream::Decoder::new(context.clone()))
     }
-    fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn StreamEncoder> {
+    fn stream_encoder(
+        &self,
+        _request: &Request,
+        options: &ConversionOptions,
+    ) -> Box<dyn StreamEncoder> {
         Box::new(stream::Encoder::new(options.clone()))
     }
 }
@@ -206,23 +225,5 @@ fn omit(
         path: path.into(),
         message: "omitted: no Chat Completions representation".into(),
     });
-    Ok(())
-}
-
-fn merge(
-    body: &mut Map<String, Value>,
-    native: Option<&Map<String, Value>>,
-) -> Result<(), BridgeError> {
-    if let Some(native) = native {
-        for (key, value) in native {
-            if body.contains_key(key) {
-                return Err(invalid(
-                    &format!("/{key}"),
-                    "native field collides with generated field",
-                ));
-            }
-            body.insert(key.clone(), value.clone());
-        }
-    }
     Ok(())
 }

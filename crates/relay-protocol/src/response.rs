@@ -6,13 +6,25 @@ use crate::{AssistantContent, Version};
 #[serde(deny_unknown_fields)]
 pub struct Response {
     pub version: Version,
+    pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
+    pub provider_id: Option<String>,
+    pub created_at: Timestamp,
     pub model: String,
     pub content: Vec<AssistantContent>,
     pub stop_reason: StopReason,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Timestamp {
+    /// Unix seconds when the adapter started receiving the response.
+    pub observed_at: u64,
+    /// Unix seconds sent by the provider, never estimated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_created_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

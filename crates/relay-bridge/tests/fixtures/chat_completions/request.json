@@ -27,8 +27,5 @@
   "stop": ["END"],
   "reasoning_effort": "low",
   "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "description": "An answer", "schema": {"type": "object"}, "strict": true}},
-  "seed": 42,
-  "service_tier": "default",
-  "metadata": {"consumer": "fixture"},
   "stream_options": {"include_usage": true}
 }

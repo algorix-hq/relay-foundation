@@ -1,7 +1,7 @@
 use std::{sync::Arc, vec};
 
 use relay_bridge::{Bridge, ConversionOptions, Frame, StreamDecoder, StreamEncoder};
-use relay_protocol::{ConversionLoss, DecodeError, RelayError, StreamEvent};
+use relay_protocol::{ConversionLoss, DecodeError, RelayError, Request, StreamEvent};
 
 use crate::{ErrorEncoder, FrameDecoder, FrameItem};
 
@@ -53,12 +53,13 @@ impl AdapterStream {
     pub fn transcode(
         self,
         client: &dyn Bridge,
+        request: &Request,
         options: &ConversionOptions,
         errors: Arc<dyn ErrorEncoder>,
     ) -> Transcoder {
         Transcoder {
             stream: self,
-            encoder: client.stream_encoder(options),
+            encoder: client.stream_encoder(request, options),
             errors,
             report: TranscodeReport {
                 losses: Vec::new(),

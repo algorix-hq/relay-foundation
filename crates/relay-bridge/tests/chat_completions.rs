@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use relay_bridge::{
-    ApiFormat, Bridge, BridgeError, ChatCompletionsBridge, ConversionOptions, Frame, Input,
-    LossScope, NativeFields, Output, chat_completions::MaxTokensField,
+    Bridge, BridgeError, ChatCompletionsBridge, ConversionOptions, DecodeContext, Frame, LossScope,
+    chat_completions::MaxTokensField,
 };
 use relay_protocol::*;
 use serde_json::{Value, json};
@@ -21,14 +21,25 @@ fn fixture(name: &str) -> Value {
     .expect("fixture JSON")
 }
 
-fn decode_request(value: &Value) -> Input {
+fn decode_request(value: &Value) -> Request {
     ChatCompletionsBridge::new()
         .decode_request(&serde_json::to_vec(value).expect("JSON"))
         .expect("request")
 }
 
-fn protocol_input(value: Value) -> Input {
-    Input::new(serde_json::from_value(value).expect("protocol request"))
+fn protocol_input(value: Value) -> Request {
+    serde_json::from_value(value).expect("protocol request")
+}
+
+fn context() -> DecodeContext {
+    DecodeContext {
+        response_id: Some("fallback".into()),
+        observed_at: 5678,
+    }
+}
+
+fn client_request() -> Request {
+    protocol_input(json!({"version":"1","model":"test-model","messages":[]}))
 }
 
 fn assert_conversion(error: BridgeError, kind: ConversionErrorKind, path: &str) {
@@ -40,7 +51,7 @@ fn assert_conversion(error: BridgeError, kind: ConversionErrorKind, path: &str) 
 }
 
 #[test]
-fn ingress_preserves_messages_options_and_same_format_native_fields() {
+fn ingress_preserves_messages_options_and_delivery_usage() {
     let bridge = ChatCompletionsBridge::new();
     for name in [
         "request.json",
@@ -58,13 +69,16 @@ fn ingress_preserves_messages_options_and_same_format_native_fields() {
         assert!(encoded.losses.is_empty());
     }
     let input = decode_request(&fixture("request.json"));
-    assert!(input.stream);
-    assert!(matches!(input.request.messages[0], Message::System { .. }));
-    assert!(matches!(
-        input.request.messages[1],
-        Message::Developer { .. }
-    ));
-    let Message::User { content } = &input.request.messages[2] else {
+    assert_eq!(
+        input.delivery,
+        Some(Delivery {
+            stream: true,
+            stream_usage: true
+        })
+    );
+    assert!(matches!(input.messages[0], Message::System { .. }));
+    assert!(matches!(input.messages[1], Message::Developer { .. }));
+    let Message::User { content } = &input.messages[2] else {
         panic!("user")
     };
     assert!(
@@ -73,18 +87,12 @@ fn ingress_preserves_messages_options_and_same_format_native_fields() {
     assert!(
         matches!(&content[3], UserContent::Document(DocumentPart { source: MediaSource::Base64 { media_type, .. }, filename: Some(filename), .. }) if media_type == "application/pdf" && filename == "report.pdf")
     );
-    let Message::Assistant { content } = &input.request.messages[3] else {
+    let Message::Assistant { content } = &input.messages[3] else {
         panic!("assistant")
     };
     assert!(
         matches!(&content[0], AssistantContent::ToolCall { arguments, .. } if arguments == "{ \"a\":1, \"a\": 2 }")
     );
-    let native = input.native_for(bridge.format()).expect("native fields");
-    assert_eq!(native.len(), 4);
-    assert_eq!(native["seed"], 42);
-    assert_eq!(native["metadata"], json!({"consumer":"fixture"}));
-    assert!(!native.contains_key("model"));
-    assert!(input.native_for(&ApiFormat::MESSAGES).is_none());
 }
 
 #[test]
@@ -209,16 +217,10 @@ fn legacy_definitions_and_choice_map_without_inventing_call_ids() {
     let bridge = ChatCompletionsBridge::new();
     let input = decode_request(&fixture("request_legacy.json"));
     assert_eq!(
-        input.request.tools.as_ref().expect("tools").choice,
+        input.tools.as_ref().expect("tools").choice,
         Some(ToolChoice::Function {
             name: "lookup".into()
         })
-    );
-    assert!(
-        !input
-            .native_for(bridge.format())
-            .expect("native")
-            .contains_key("functions")
     );
     assert_eq!(
         bridge
@@ -230,17 +232,27 @@ fn legacy_definitions_and_choice_map_without_inventing_call_ids() {
 }
 
 #[test]
-fn native_fields_never_override_generated_fields() {
-    let request = decode_request(&fixture("request_tokens.json")).request;
-    let native = NativeFields::from_iter([("model".into(), json!("override"))]);
-    let input = Input::with_native(ApiFormat::CHAT_COMPLETIONS, request, false, native);
-    assert_conversion(
-        ChatCompletionsBridge::new()
-            .encode_request(&input, &ConversionOptions::default())
-            .expect_err("collision"),
-        ConversionErrorKind::Invalid,
-        "/model",
-    );
+fn ingress_rejects_seed_and_other_unrepresentable_top_level_fields() {
+    let bridge = ChatCompletionsBridge::new();
+    for (key, value) in [
+        ("seed", json!(42)),
+        ("service_tier", json!("default")),
+        ("metadata", json!({"consumer":"fixture"})),
+        ("user", json!("u")),
+        ("logprobs", json!(true)),
+        ("n", json!(1)),
+        ("prediction", json!({})),
+    ] {
+        let mut wire = fixture("request_tokens.json");
+        wire[key] = value;
+        assert_conversion(
+            bridge
+                .decode_request(&serde_json::to_vec(&wire).expect("JSON"))
+                .expect_err("strict ingress"),
+            ConversionErrorKind::Unrepresentable,
+            &format!("/{key}"),
+        );
+    }
 }
 
 #[test]
@@ -253,7 +265,6 @@ fn unrepresentable_request_features_have_precise_paths_even_with_loss_permission
             LossScope::UnknownContent,
         ]
         .into(),
-        ..Default::default()
     };
     for (part, suffix) in [
         (
@@ -308,7 +319,7 @@ fn unrepresentable_request_features_have_precise_paths_even_with_loss_permission
         (None, Some(f64::INFINITY), "/parameters/top_p"),
     ] {
         let mut input = decode_request(&fixture("request_tokens.json"));
-        input.request.parameters = Some(Parameters {
+        input.parameters = Some(Parameters {
             max_output_tokens: None,
             temperature,
             top_p,
@@ -333,6 +344,11 @@ fn unrepresentable_request_features_have_precise_paths_even_with_loss_permission
             json!({"type":"json_schema","name":"s","schema":true}),
             "/response_format/schema",
         ),
+        (
+            "response_format",
+            json!({"type":"json_schema","schema":{}}),
+            "/response_format/name",
+        ),
     ] {
         let mut request = json!({"version":"1","model":"m","messages":[]});
         request[field] = value;
@@ -351,9 +367,9 @@ fn losses_require_matching_scopes_and_report_each_dropped_item() {
     let bridge = ChatCompletionsBridge::new();
     let input = protocol_input(
         json!({"version":"1","model":"test-model","messages":[{"role":"assistant","content":[
-            {"type":"reasoning","text":"private","opaque":"opaque"},
-            {"type":"unknown","value":{"future":true}},
-            {"type":"text","text":"ok","cache_control":{}}
+            {"type":"reasoning","id":"r:0","text":"private","opaque":"opaque"},
+            {"type":"unknown","id":"r:1","value":{"future":true}},
+            {"type":"text","id":"r:2","text":"ok","cache_control":{}}
         ]}]}),
     );
     for (scopes, path) in [
@@ -366,7 +382,6 @@ fn losses_require_matching_scopes_and_report_each_dropped_item() {
     ] {
         let options = ConversionOptions {
             allow_loss: scopes.into_iter().collect(),
-            ..Default::default()
         };
         assert_conversion(
             bridge
@@ -383,7 +398,6 @@ fn losses_require_matching_scopes_and_report_each_dropped_item() {
             LossScope::CacheControl,
         ]
         .into(),
-        ..Default::default()
     };
     let encoded = bridge
         .encode_request(&input, &options)
@@ -403,76 +417,106 @@ fn losses_require_matching_scopes_and_report_each_dropped_item() {
     );
 }
 
-fn output(name: &str) -> Output {
+fn output(name: &str) -> Response {
     ChatCompletionsBridge::new()
-        .decode_response(&serde_json::to_vec(&fixture(name)).expect("JSON"))
+        .decode_response(
+            &serde_json::to_vec(&fixture(name)).expect("JSON"),
+            &context(),
+        )
         .expect("response")
 }
 
 #[test]
-fn responses_preserve_text_tools_usage_and_native_metadata_without_inventing_refusal_text() {
+fn responses_preserve_text_tools_usage_and_ignore_unrepresented_metadata() {
     let bridge = ChatCompletionsBridge::new();
     let output = output("response.json");
-    assert_eq!(output.response.id.as_deref(), Some("chatcmpl_fixture"));
-    assert_eq!(output.response.stop_reason, StopReason::ToolUse);
+    assert_eq!(output.stop_reason, StopReason::ToolUse);
     assert_eq!(
-        output.response.content,
+        output.content,
         vec![
-            AssistantContent::Text(TextPart {
+            AssistantContent::Text {
+                id: "chatcmpl_fixture:0".into(),
+                provider_id: None,
                 text: "Checking".into(),
                 cache_control: None
-            }),
+            },
             AssistantContent::ToolCall {
-                id: "call_1".into(),
+                id: "chatcmpl_fixture:1".into(),
+                provider_id: None,
+                call_id: "call_1".into(),
                 name: "lookup".into(),
                 arguments: "{ \"x\": 1 }".into(),
                 cache_control: None
             }
         ]
     );
-    assert_eq!(output.response.usage, Some(usage()));
+    assert_eq!(output.usage, Some(usage()));
     assert_eq!(
-        output.native_for(bridge.format()).expect("native")["created"],
-        1234
+        output.created_at,
+        Timestamp {
+            observed_at: 5678,
+            provider_created_at: Some(1234)
+        }
     );
+    let mut expected = fixture("response.json");
+    for key in ["system_fingerprint", "service_tier", "metadata"] {
+        expected.as_object_mut().expect("object").remove(key);
+    }
     assert_eq!(
         bridge
-            .encode_response(&output, &ConversionOptions::default())
+            .encode_response(&client_request(), &output, &ConversionOptions::default())
             .expect("same-format response")
             .body,
-        fixture("response.json")
+        expected
     );
     let refusal_wire = fixture("response_refusal.json");
     let refusal = bridge
-        .decode_response(&serde_json::to_vec(&refusal_wire).expect("JSON"))
+        .decode_response(
+            &serde_json::to_vec(&refusal_wire).expect("JSON"),
+            &context(),
+        )
         .expect("refusal");
     assert_eq!(
-        refusal.response.content,
+        refusal.content,
         vec![AssistantContent::Unknown {
+            id: "chatcmpl_refusal:0".into(),
+            provider_id: None,
             value: refusal_wire["choices"][0]["message"].clone()
         }]
     );
-    assert_eq!(refusal.response.stop_reason, StopReason::ContentFilter);
-    assert_eq!(refusal.response.usage, None);
+    assert_eq!(refusal.stop_reason, StopReason::ContentFilter);
+    assert_eq!(refusal.usage, None);
     let unknown_wire = fixture("response_unknown.json");
     let unknown = bridge
-        .decode_response(&serde_json::to_vec(&unknown_wire).expect("JSON"))
+        .decode_response(
+            &serde_json::to_vec(&unknown_wire).expect("JSON"),
+            &context(),
+        )
         .expect("unknown tool output");
     assert_eq!(
-        unknown.response.content,
+        unknown.content,
         vec![AssistantContent::Unknown {
+            id: "chatcmpl_custom:0".into(),
+            provider_id: None,
             value: unknown_wire["choices"][0]["message"]["tool_calls"][0].clone()
         }]
     );
     assert!(
-        matches!(bridge.decode_response(&serde_json::to_vec(&fixture("response_multiple.json")).expect("JSON")), Err(BridgeError::Decode(error)) if error.message.contains("multiple choices"))
+        matches!(bridge.decode_response(&serde_json::to_vec(&fixture("response_multiple.json")).expect("JSON"), &context()), Err(BridgeError::Decode(error)) if error.message.contains("multiple choices"))
     );
     for malformed in [b"{".as_slice(), b"{}"] {
         assert!(matches!(
-            bridge.decode_response(malformed),
+            bridge.decode_response(malformed, &context()),
             Err(BridgeError::Decode(_))
         ));
     }
+}
+
+#[test]
+fn relay_identity_uses_provider_ids_when_present() {
+    let response = output("response_unknown.json");
+    assert_eq!(response.id, "chatcmpl_custom");
+    assert_eq!(response.provider_id.as_deref(), Some("chatcmpl_custom"));
 }
 
 fn usage() -> Usage {
@@ -495,7 +539,7 @@ fn chunk(name: &str) -> Frame {
 #[test]
 fn stream_waits_for_done_preserves_parallel_arguments_and_late_usage() {
     let bridge = ChatCompletionsBridge::new();
-    let mut decoder = bridge.stream_decoder();
+    let mut decoder = bridge.stream_decoder(&context());
     let mut events = Vec::new();
     for name in [
         "chunk_00.json",
@@ -510,12 +554,19 @@ fn stream_waits_for_done_preserves_parallel_arguments_and_late_usage() {
     assert_eq!(
         events,
         vec![
-            StreamEvent::ResponseStart {
-                id: Some("chatcmpl_fixture".into()),
+            StreamEvent::Start {
+                response_id: "chatcmpl_fixture".into(),
+                provider_id: Some("chatcmpl_fixture".into()),
+                created_at: Timestamp {
+                    observed_at: 5678,
+                    provider_created_at: Some(1234)
+                },
                 model: Some("test-model".into())
             },
             StreamEvent::ItemStart {
                 index: 0,
+                id: "chatcmpl_fixture:0".into(),
+                provider_id: None,
                 item: StreamItem::Text
             },
             StreamEvent::Delta {
@@ -526,8 +577,10 @@ fn stream_waits_for_done_preserves_parallel_arguments_and_late_usage() {
             },
             StreamEvent::ItemStart {
                 index: 1,
+                id: "chatcmpl_fixture:1".into(),
+                provider_id: None,
                 item: StreamItem::ToolCall {
-                    id: Some("call_1".into()),
+                    call_id: Some("call_1".into()),
                     name: Some("lookup".into())
                 }
             },
@@ -539,9 +592,11 @@ fn stream_waits_for_done_preserves_parallel_arguments_and_late_usage() {
             },
             StreamEvent::ItemStart {
                 index: 2,
+                id: "chatcmpl_fixture:2".into(),
+                provider_id: None,
                 item: StreamItem::ToolCall {
-                    id: Some("call_2".into()),
-                    name: Some("weather".into())
+                    call_id: None,
+                    name: None,
                 }
             },
             StreamEvent::Delta {
@@ -550,6 +605,12 @@ fn stream_waits_for_done_preserves_parallel_arguments_and_late_usage() {
                     text: "{\"city\":".into()
                 }
             },
+            StreamEvent::Metadata(MetadataScope::Item {
+                index: 2,
+                provider_id: None,
+                call_id: Some("call_2".into()),
+                name: Some("weather".into()),
+            }),
             StreamEvent::Delta {
                 index: 2,
                 delta: StreamDelta::ToolCallArguments {
@@ -590,70 +651,45 @@ fn stream_waits_for_done_preserves_parallel_arguments_and_late_usage() {
         ]
     );
     decoder.finish(&mut events).expect("complete stream");
-    let mut decoder = bridge.stream_decoder();
+    let mut decoder = bridge.stream_decoder(&context());
     assert!(
         matches!(decoder.push(Frame { event:None, data:json!({"error":{"message":"failure"}}).to_string() }, &mut Vec::new()), Err(BridgeError::Decode(error)) if error.message.contains("removed by the adapter"))
     );
 }
 
 #[test]
-fn response_encoding_requires_provider_facts_or_explicit_created_time() {
+fn response_encoding_prefers_provider_time_and_falls_back_to_observed_time() {
     let bridge = ChatCompletionsBridge::new();
-    let mut response = output("response.json").response;
+    let mut response = output("response.json");
     response.content = vec![
-        AssistantContent::Text(TextPart {
+        AssistantContent::Text {
+            id: "chatcmpl_fixture:0".into(),
+            provider_id: None,
             text: "Hello ".into(),
             cache_control: None,
-        }),
-        AssistantContent::Text(TextPart {
+        },
+        AssistantContent::Text {
+            id: "chatcmpl_fixture:1".into(),
+            provider_id: None,
             text: "world".into(),
             cache_control: None,
-        }),
+        },
     ];
     response.stop_reason = StopReason::EndTurn;
-    let mut output = Output::new(response);
-    assert_conversion(
-        bridge
-            .encode_response(&output, &ConversionOptions::default())
-            .expect_err("missing created"),
-        ConversionErrorKind::Unrepresentable,
-        "/created",
-    );
-    let options = ConversionOptions {
-        created_at: Some(1234),
-        ..Default::default()
-    };
     let encoded = bridge
-        .encode_response(&output, &options)
-        .expect("explicit timestamp");
+        .encode_response(&client_request(), &response, &ConversionOptions::default())
+        .expect("provider timestamp");
     assert_eq!(encoded.body, fixture("response_encoded.json"));
     assert!(encoded.losses.is_empty());
-    output.response.id = None;
-    let native = NativeFields::from_iter([
-        ("id".into(), json!("chatcmpl_fixture")),
-        ("created".into(), json!(1234)),
-    ]);
-    let same_format =
-        Output::with_native(ApiFormat::CHAT_COMPLETIONS, output.response.clone(), native);
+    response.created_at.provider_created_at = None;
+    let mut expected = fixture("response_encoded.json");
+    expected["created"] = json!(5678);
     assert_eq!(
         bridge
-            .encode_response(
-                &same_format,
-                &ConversionOptions {
-                    created_at: Some(999),
-                    ..Default::default()
-                }
-            )
-            .expect("native id and created take precedence")
+            .encode_response(&client_request(), &response, &ConversionOptions::default())
+            .expect("observed timestamp")
             .body,
-        fixture("response_encoded.json")
-    );
-    assert_conversion(
-        bridge
-            .encode_response(&output, &options)
-            .expect_err("missing id"),
-        ConversionErrorKind::Unrepresentable,
-        "/id",
+        expected
     );
 }
 
@@ -661,20 +697,26 @@ fn response_encoding_requires_provider_facts_or_explicit_created_time() {
 fn stream_encoder_emits_sdk_chunks_and_done_and_reports_losses_immediately() {
     let bridge = ChatCompletionsBridge::new();
     let options = ConversionOptions {
-        created_at: Some(1234),
         allow_loss: [LossScope::Reasoning, LossScope::UnknownContent].into(),
     };
-    let mut encoder = bridge.stream_encoder(&options);
+    let mut encoder = bridge.stream_encoder(&client_request(), &options);
     let mut frames = Vec::new();
     let mut losses = Vec::new();
     let events = vec![
-        StreamEvent::ResponseStart {
-            id: Some("chatcmpl_fixture".into()),
+        StreamEvent::Start {
+            response_id: "chatcmpl_fixture".into(),
+            provider_id: None,
+            created_at: Timestamp {
+                observed_at: 1234,
+                provider_created_at: None,
+            },
             model: Some("test-model".into()),
         },
         StreamEvent::ItemStart {
             index: 0,
-            item: StreamItem::Reasoning { id: None },
+            id: "chatcmpl_fixture:0".into(),
+            provider_id: None,
+            item: StreamItem::Reasoning,
         },
         StreamEvent::Delta {
             index: 0,
@@ -685,6 +727,8 @@ fn stream_encoder_emits_sdk_chunks_and_done_and_reports_losses_immediately() {
         StreamEvent::ItemEnd { index: 0 },
         StreamEvent::ItemStart {
             index: 1,
+            id: "chatcmpl_fixture:1".into(),
+            provider_id: None,
             item: StreamItem::Text,
         },
         StreamEvent::Delta {
@@ -696,8 +740,10 @@ fn stream_encoder_emits_sdk_chunks_and_done_and_reports_losses_immediately() {
         StreamEvent::ItemEnd { index: 1 },
         StreamEvent::ItemStart {
             index: 2,
+            id: "chatcmpl_fixture:2".into(),
+            provider_id: None,
             item: StreamItem::ToolCall {
-                id: Some("call_1".into()),
+                call_id: Some("call_1".into()),
                 name: Some("lookup".into()),
             },
         },
@@ -710,6 +756,8 @@ fn stream_encoder_emits_sdk_chunks_and_done_and_reports_losses_immediately() {
         StreamEvent::ItemEnd { index: 2 },
         StreamEvent::ItemStart {
             index: 3,
+            id: "chatcmpl_fixture:3".into(),
+            provider_id: None,
             item: StreamItem::Unknown,
         },
         StreamEvent::Delta {
@@ -748,6 +796,7 @@ fn stream_encoder_emits_sdk_chunks_and_done_and_reports_losses_immediately() {
         .collect::<Vec<_>>();
     let expected = [
         "chunk_00.json",
+        "chunk_encoded_text_start.json",
         "chunk_encoded_text.json",
         "chunk_encoded_tool_start.json",
         "chunk_encoded_arguments.json",
@@ -757,18 +806,7 @@ fn stream_encoder_emits_sdk_chunks_and_done_and_reports_losses_immediately() {
     .map(fixture);
     assert_eq!(chunks, expected);
     let start = &events[0];
-    assert_conversion(
-        bridge
-            .stream_encoder(&ConversionOptions::default())
-            .push(start, &mut Vec::new(), &mut Vec::new())
-            .expect_err("missing created"),
-        ConversionErrorKind::Unrepresentable,
-        "/created",
-    );
-    let mut strict = bridge.stream_encoder(&ConversionOptions {
-        created_at: Some(1234),
-        ..Default::default()
-    });
+    let mut strict = bridge.stream_encoder(&client_request(), &ConversionOptions::default());
     strict
         .push(start, &mut Vec::new(), &mut Vec::new())
         .expect("start");
@@ -779,4 +817,93 @@ fn stream_encoder_emits_sdk_chunks_and_done_and_reports_losses_immediately() {
         ConversionErrorKind::Unrepresentable,
         "/items/0",
     );
+}
+
+#[test]
+fn stream_usage_requires_stream_and_stream_options_are_strict() {
+    let bridge = ChatCompletionsBridge::new();
+    let mut request = client_request();
+    request.delivery = Some(Delivery {
+        stream: false,
+        stream_usage: true,
+    });
+    assert_conversion(
+        bridge
+            .encode_request(&request, &ConversionOptions::default())
+            .expect_err("stream required"),
+        ConversionErrorKind::Invalid,
+        "/delivery/stream_usage",
+    );
+    for (options, kind, path) in [
+        (
+            json!({"include_usage":true}),
+            ConversionErrorKind::Invalid,
+            "/stream_options/include_usage",
+        ),
+        (
+            json!({"future":true}),
+            ConversionErrorKind::Unrepresentable,
+            "/stream_options/future",
+        ),
+    ] {
+        let body = json!({"model":"m","messages":[],"stream":false,"stream_options":options});
+        assert_conversion(
+            bridge
+                .decode_request(&serde_json::to_vec(&body).expect("JSON"))
+                .expect_err("invalid delivery"),
+            kind,
+            path,
+        );
+    }
+}
+
+#[test]
+fn an_item_with_start_and_end_only_remains_present() {
+    let bridge = ChatCompletionsBridge::new();
+    let mut encoder = bridge.stream_encoder(&client_request(), &ConversionOptions::default());
+    let events = [
+        StreamEvent::Start {
+            response_id: "r".into(),
+            provider_id: None,
+            created_at: Timestamp {
+                observed_at: 5,
+                provider_created_at: None,
+            },
+            model: Some("m".into()),
+        },
+        StreamEvent::ItemStart {
+            index: 0,
+            id: "r:0".into(),
+            provider_id: None,
+            item: StreamItem::Text,
+        },
+        StreamEvent::ItemEnd { index: 0 },
+        StreamEvent::Stop {
+            stop_reason: StopReason::EndTurn,
+            usage: None,
+        },
+    ];
+    let mut frames = Vec::new();
+    let mut losses = Vec::new();
+    for event in &events {
+        encoder
+            .push(event, &mut frames, &mut losses)
+            .expect("event");
+    }
+    encoder.finish(&mut frames, &mut losses).expect("complete");
+    let mut decoder = bridge.stream_decoder(&context());
+    let mut decoded = Vec::new();
+    for frame in frames {
+        decoder.push(frame, &mut decoded).expect("frame");
+    }
+    decoder.finish(&mut decoded).expect("complete");
+    assert!(
+        matches!(&decoded[1], StreamEvent::ItemStart { index: 0, id, provider_id: None, item: StreamItem::Text } if id == "r:0")
+    );
+    assert_eq!(
+        decoded[decoded.len() - 2],
+        StreamEvent::ItemEnd { index: 0 }
+    );
+    assert_eq!(decoded.last(), events.last());
+    assert!(losses.is_empty());
 }

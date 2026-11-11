@@ -87,13 +87,41 @@ pub(super) fn encode_usage(usage: &Usage) -> Result<Value, BridgeError> {
     Ok(value)
 }
 
-pub(super) fn decode(body: &[u8]) -> Result<Output, BridgeError> {
+pub(super) fn response_identity(
+    value: &Value,
+    context: &DecodeContext,
+) -> Result<(String, Option<String>), BridgeError> {
+    let provider_id: Option<String> = read(&value["id"], "/id")?;
+    let id = provider_id
+        .clone()
+        .or_else(|| context.response_id.clone())
+        .ok_or_else(|| {
+            decode_error(
+                "/id",
+                "response ID missing and no adapter fallback supplied",
+            )
+        })?;
+    Ok((id, provider_id))
+}
+
+fn unknown(response_id: &str, index: usize, value: Value) -> AssistantContent {
+    AssistantContent::Unknown {
+        id: format!("{response_id}:{index}"),
+        provider_id: None,
+        value,
+    }
+}
+
+pub(super) fn decode(body: &[u8], context: &DecodeContext) -> Result<Response, BridgeError> {
     let value: Value = serde_json::from_slice(body).map_err(|e| decode_error("", e.to_string()))?;
-    let mut native = value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| decode_error("", "expected response object"))?;
-    let _: u64 = read(&value["created"], "/created")?;
+    if !value.is_object() {
+        return Err(decode_error("", "expected response object"));
+    }
+    let (id, provider_id) = response_identity(&value, context)?;
+    let created_at = Timestamp {
+        observed_at: context.observed_at,
+        provider_created_at: read(&value["created"], "/created")?,
+    };
     if value["object"] != "chat.completion" {
         return Err(decode_error("/object", "expected chat.completion"));
     }
@@ -128,24 +156,26 @@ pub(super) fn decode(body: &[u8]) -> Result<Output, BridgeError> {
     let mut content = Vec::new();
     match &message["content"] {
         Value::Null => {}
-        Value::String(text) => content.push(AssistantContent::Text(TextPart {
+        Value::String(text) => content.push(AssistantContent::Text {
+            id: format!("{id}:{}", content.len()),
+            provider_id: None,
             text: text.clone(),
             cache_control: None,
-        })),
+        }),
         Value::Array(parts) => {
             for (i, value) in parts.iter().enumerate() {
                 if value["type"] == "text" {
-                    content.push(AssistantContent::Text(TextPart {
+                    content.push(AssistantContent::Text {
+                        id: format!("{id}:{}", content.len()),
+                        provider_id: None,
                         text: read(
                             &value["text"],
                             &format!("/choices/0/message/content/{i}/text"),
                         )?,
                         cache_control: None,
-                    }));
-                } else {
-                    content.push(AssistantContent::Unknown {
-                        value: value.clone(),
                     });
+                } else {
+                    content.push(unknown(&id, content.len(), value.clone()));
                 }
             }
         }
@@ -157,9 +187,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Output, BridgeError> {
         }
     }
     if reason == "content_filter" || message["refusal"].is_string() {
-        content.push(AssistantContent::Unknown {
-            value: message.clone(),
-        });
+        content.push(unknown(&id, content.len(), message.clone()));
     }
     if let Some(calls) = message.get("tool_calls") {
         for (i, call) in read::<Vec<Value>>(calls, "/choices/0/message/tool_calls")?
@@ -169,13 +197,13 @@ pub(super) fn decode(body: &[u8]) -> Result<Output, BridgeError> {
             let path = format!("/choices/0/message/tool_calls/{i}");
             let kind: String = read(&call["type"], &format!("{path}/type"))?;
             if kind != "function" {
-                content.push(AssistantContent::Unknown {
-                    value: call.clone(),
-                });
+                content.push(unknown(&id, content.len(), call.clone()));
                 continue;
             }
             content.push(AssistantContent::ToolCall {
-                id: read(&call["id"], &format!("{path}/id"))?,
+                id: format!("{id}:{}", content.len()),
+                provider_id: None,
+                call_id: read(&call["id"], &format!("{path}/id"))?,
                 name: read(&call["function"]["name"], &format!("{path}/function/name"))?,
                 arguments: read(
                     &call["function"]["arguments"],
@@ -186,26 +214,18 @@ pub(super) fn decode(body: &[u8]) -> Result<Output, BridgeError> {
         }
     }
     if let Some(call) = message.get("function_call").filter(|v| !v.is_null()) {
-        content.push(AssistantContent::Unknown {
-            value: json!({"function_call":call}),
-        });
+        content.push(unknown(&id, content.len(), json!({"function_call":call})));
     }
-    let response = Response {
+    Ok(Response {
         version: Version::V1,
-        id: Some(read(&value["id"], "/id")?),
+        id,
+        provider_id,
+        created_at,
         model: read(&value["model"], "/model")?,
         content,
         stop_reason: stop_reason(&reason),
         usage: decode_usage(&value["usage"])?,
-    };
-    for key in ["id", "model", "choices", "usage"] {
-        native.remove(key);
-    }
-    Ok(Output::with_native(
-        ApiFormat::CHAT_COMPLETIONS,
-        response,
-        native,
-    ))
+    })
 }
 
 pub(super) fn encode_content(
@@ -219,20 +239,10 @@ pub(super) fn encode_content(
     for (i, item) in content.iter().enumerate() {
         let path = format!("{path}/{i}");
         match item {
-            AssistantContent::Text(part) => {
-                super::request::cache(
-                    &part.cache_control,
-                    &format!("{path}/cache_control"),
-                    options,
-                    losses,
-                )?;
-                text.get_or_insert_default().push_str(&part.text);
-            }
-            AssistantContent::ToolCall {
-                id,
-                name,
-                arguments,
+            AssistantContent::Text {
+                text: part_text,
                 cache_control,
+                ..
             } => {
                 super::request::cache(
                     cache_control,
@@ -240,7 +250,22 @@ pub(super) fn encode_content(
                     options,
                     losses,
                 )?;
-                calls.push(json!({"id":id,"type":"function","function":{"name":name,"arguments":arguments}}));
+                text.get_or_insert_default().push_str(part_text);
+            }
+            AssistantContent::ToolCall {
+                call_id,
+                name,
+                arguments,
+                cache_control,
+                ..
+            } => {
+                super::request::cache(
+                    cache_control,
+                    &format!("{path}/cache_control"),
+                    options,
+                    losses,
+                )?;
+                calls.push(json!({"id":call_id,"type":"function","function":{"name":name,"arguments":arguments}}));
             }
             AssistantContent::Reasoning { .. } => {
                 omit(options, losses, LossScope::Reasoning, &path)?
@@ -253,36 +278,14 @@ pub(super) fn encode_content(
     Ok((text, calls))
 }
 
-pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Encoded, BridgeError> {
-    let response = &output.response;
-    let mut native = output
-        .native_for(&ApiFormat::CHAT_COMPLETIONS)
-        .cloned()
-        .unwrap_or_default();
-    let id: String = if let Some(id) = native.remove("id") {
-        parse(id, "/id")?
-    } else {
-        response
-            .id
-            .clone()
-            .ok_or_else(|| unrepresentable("/id", "required id missing"))?
-    };
-    let created: u64 = if let Some(created) = native.remove("created") {
-        parse(created, "/created")?
-    } else {
-        options.created_at.ok_or_else(|| {
-            unrepresentable(
-                "/created",
-                "required created missing; supply options.created_at",
-            )
-        })?
-    };
-    let object = native
-        .remove("object")
-        .unwrap_or_else(|| json!("chat.completion"));
-    if object != "chat.completion" {
-        return Err(invalid("/object", "expected chat.completion"));
-    }
+pub(super) fn encode(
+    response: &Response,
+    options: &ConversionOptions,
+) -> Result<Encoded, BridgeError> {
+    let created = response
+        .created_at
+        .provider_created_at
+        .unwrap_or(response.created_at.observed_at);
     let mut losses = Vec::new();
     let (text, calls) = encode_content(&response.content, "/content", options, &mut losses)?;
     let mut message = json!({"role":"assistant","content":text,"refusal":null});
@@ -290,10 +293,10 @@ pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Enc
         message["tool_calls"] = json!(calls);
     }
     let mut body = Map::from_iter([
-        ("id".into(), json!(id)),
+        ("id".into(), json!(response.id)),
         ("created".into(), json!(created)),
         ("model".into(), json!(response.model)),
-        ("object".into(), object),
+        ("object".into(), json!("chat.completion")),
         (
             "choices".into(),
             json!([{"index":0,"message":message,"finish_reason":finish_reason(&response.stop_reason)?,"logprobs":null}]),
@@ -302,7 +305,6 @@ pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Enc
     if let Some(usage) = &response.usage {
         body.insert("usage".into(), encode_usage(usage)?);
     }
-    merge(&mut body, Some(&native))?;
     Ok(Encoded {
         body: Value::Object(body),
         losses,

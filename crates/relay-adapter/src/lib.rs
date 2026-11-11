@@ -13,10 +13,10 @@ pub use stream::*;
 
 use std::fmt;
 
-use relay_bridge::{Frame, Input, Output};
+use relay_bridge::Frame;
 use relay_protocol::{
     ConfigurationError, ConversionLoss, DecodeError, ProviderError, ProviderErrorCategory,
-    RelayError, UnsupportedOperation,
+    RelayError, Request, Response, UnsupportedOperation,
 };
 use serde_json::Value;
 
@@ -85,7 +85,7 @@ pub struct ModelPage {
 pub trait AdapterExt: Adapter {
     fn build_request(
         &self,
-        input: &Input,
+        request: &Request,
     ) -> Result<(ProviderRequest, Vec<ConversionLoss>), RelayError>;
 
     fn parse_response(
@@ -93,7 +93,7 @@ pub trait AdapterExt: Adapter {
         status: u16,
         headers: &Headers,
         body: &[u8],
-    ) -> Result<Output, RelayError>;
+    ) -> Result<Response, RelayError>;
 
     /// A rejected response must be classified after the consumer reads its body.
     fn open_stream(
@@ -115,13 +115,17 @@ pub trait AdapterExt: Adapter {
 impl<A: Adapter + ?Sized> AdapterExt for A {
     fn build_request(
         &self,
-        input: &Input,
+        request: &Request,
     ) -> Result<(ProviderRequest, Vec<ConversionLoss>), RelayError> {
         let conversion = self.conversion();
         let encoded = conversion
             .bridge()
-            .encode_request(input, conversion.options())?;
-        let request = self.assemble_request(&input.request.model, encoded.body, input.stream)?;
+            .encode_request(request, conversion.options())?;
+        let request = self.assemble_request(
+            &request.model,
+            encoded.body,
+            request.delivery.is_some_and(|delivery| delivery.stream),
+        )?;
         Ok((request, encoded.losses))
     }
 
@@ -130,9 +134,10 @@ impl<A: Adapter + ?Sized> AdapterExt for A {
         status: u16,
         headers: &Headers,
         body: &[u8],
-    ) -> Result<Output, RelayError> {
+    ) -> Result<Response, RelayError> {
+        let context = self.conversion().decode_context();
         check_response(self, status, headers, body)?;
-        Ok(self.conversion().bridge().decode_response(body)?)
+        Ok(self.conversion().bridge().decode_response(body, &context)?)
     }
 
     fn open_stream(
@@ -153,7 +158,10 @@ impl<A: Adapter + ?Sized> AdapterExt for A {
         }
         Ok(AdapterStream {
             frames: self.frame_decoder(headers),
-            decoder: self.conversion().bridge().stream_decoder(),
+            decoder: self
+                .conversion()
+                .bridge()
+                .stream_decoder(&self.conversion().decode_context()),
             terminal: false,
         })
     }

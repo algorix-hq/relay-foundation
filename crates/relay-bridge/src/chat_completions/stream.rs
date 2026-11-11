@@ -6,9 +6,10 @@ use serde_json::{Value, json};
 use super::{response::*, *};
 use crate::Frame;
 
-#[derive(Default)]
 pub(super) struct Decoder {
-    started: bool,
+    context: DecodeContext,
+    response_id: Option<String>,
+    model: Option<String>,
     done: bool,
     next_index: u32,
     text: Option<u32>,
@@ -21,12 +22,28 @@ pub(super) struct Decoder {
 
 struct DecodedTool {
     index: u32,
-    id: Option<String>,
+    call_id: Option<String>,
     name: Option<String>,
     unknown: bool,
 }
 
 impl Decoder {
+    pub(super) fn new(context: DecodeContext) -> Self {
+        Self {
+            context,
+            response_id: None,
+            model: None,
+            done: false,
+            next_index: 0,
+            text: None,
+            refusal: None,
+            tools: BTreeMap::new(),
+            open: Vec::new(),
+            reason: None,
+            usage: None,
+        }
+    }
+
     fn start_item(
         &mut self,
         item: StreamItem,
@@ -36,7 +53,16 @@ impl Decoder {
         self.next_index = index
             .checked_add(1)
             .ok_or_else(|| decode_error("/choices/0/delta", "too many content items"))?;
-        out.push(StreamEvent::ItemStart { index, item });
+        let response_id = self
+            .response_id
+            .as_ref()
+            .ok_or_else(|| decode_error("/id", "Start required before items"))?;
+        out.push(StreamEvent::ItemStart {
+            index,
+            id: format!("{response_id}:{index}"),
+            provider_id: None,
+            item,
+        });
         self.open.push(index);
         Ok(index)
     }
@@ -44,7 +70,7 @@ impl Decoder {
     fn tool(&mut self, call: &Value, out: &mut Vec<StreamEvent>) -> Result<(), BridgeError> {
         let wire_index: u32 = read(&call["index"], "/choices/0/delta/tool_calls/index")?;
         let path = format!("/choices/0/delta/tool_calls/{wire_index}");
-        let id: Option<String> = read(&call["id"], &format!("{path}/id"))?;
+        let call_id: Option<String> = read(&call["id"], &format!("{path}/id"))?;
         let name: Option<String> =
             read(&call["function"]["name"], &format!("{path}/function/name"))?;
         if !self.tools.contains_key(&wire_index) {
@@ -53,7 +79,7 @@ impl Decoder {
                 StreamItem::Unknown
             } else {
                 StreamItem::ToolCall {
-                    id: id.clone(),
+                    call_id: call_id.clone(),
                     name: name.clone(),
                 }
             };
@@ -62,7 +88,7 @@ impl Decoder {
                 wire_index,
                 DecodedTool {
                     index,
-                    id: id.clone(),
+                    call_id: call_id.clone(),
                     name: name.clone(),
                     unknown,
                 },
@@ -70,7 +96,7 @@ impl Decoder {
         }
         let tool = self
             .tools
-            .get(&wire_index)
+            .get_mut(&wire_index)
             .ok_or_else(|| decode_error(&path, "tool state missing"))?;
         if tool.unknown {
             out.push(StreamEvent::Delta {
@@ -84,11 +110,21 @@ impl Decoder {
         if call.get("type").is_some_and(|kind| kind != "function") || call.get("custom").is_some() {
             return Err(decode_error(&path, "tool kind changed after item start"));
         }
-        if (id.is_some() && id != tool.id) || (name.is_some() && name != tool.name) {
-            return Err(decode_error(
-                &path,
-                "tool identity changed after item start; cannot express identity deltas",
-            ));
+        let call_id = call_id.filter(|call_id| tool.call_id.as_ref() != Some(call_id));
+        let name = name.filter(|name| tool.name.as_ref() != Some(name));
+        if call_id.is_some() || name.is_some() {
+            if let Some(call_id) = &call_id {
+                tool.call_id = Some(call_id.clone());
+            }
+            if let Some(name) = &name {
+                tool.name = Some(name.clone());
+            }
+            out.push(StreamEvent::Metadata(MetadataScope::Item {
+                index: tool.index,
+                provider_id: None,
+                call_id,
+                name,
+            }));
         }
         if let Some(text) = read::<Option<String>>(
             &call["function"]["arguments"],
@@ -130,22 +166,34 @@ impl StreamDecoder for Decoder {
                 "error payload should have been removed by the adapter",
             ));
         }
-        let _: u64 = read(&value["created"], "/created")?;
+        let provider_created_at = read(&value["created"], "/created")?;
         if value["object"] != "chat.completion.chunk" {
             return Err(decode_error("/object", "expected chat.completion.chunk"));
         }
-        let id: String = read(&value["id"], "/id")?;
+        let (id, provider_id) = response_identity(&value, &self.context)?;
         let model: String = read(&value["model"], "/model")?;
         let choices: Vec<Value> = read(&value["choices"], "/choices")?;
         if choices.len() > 1 {
             return Err(decode_error("/choices", "multiple choices are unsupported"));
         }
-        if !self.started {
-            out.push(StreamEvent::ResponseStart {
-                id: Some(id),
-                model: Some(model),
+        if self.response_id.is_none() {
+            out.push(StreamEvent::Start {
+                response_id: id.clone(),
+                provider_id,
+                created_at: Timestamp {
+                    observed_at: self.context.observed_at,
+                    provider_created_at,
+                },
+                model: Some(model.clone()),
             });
-            self.started = true;
+            self.response_id = Some(id);
+            self.model = Some(model.clone());
+        } else if self.model.as_ref() != Some(&model) {
+            out.push(StreamEvent::Metadata(MetadataScope::Response {
+                usage: None,
+                model: Some(model.clone()),
+            }));
+            self.model = Some(model);
         }
         if let Some(usage) = decode_usage(&value["usage"])? {
             self.usage = Some(usage);
@@ -258,7 +306,7 @@ impl Encoder {
         let mut chunk = self
             .header
             .clone()
-            .ok_or_else(|| invalid("", "ResponseStart required before stream content"))?;
+            .ok_or_else(|| invalid("", "Start required before stream content"))?;
         chunk["choices"] = choices;
         if let Some(usage) = usage {
             chunk["usage"] = usage;
@@ -290,44 +338,95 @@ impl StreamEncoder for Encoder {
             return Err(invalid("", "event after Stop"));
         }
         match event {
-            StreamEvent::ResponseStart { id, model } => {
+            StreamEvent::Start {
+                response_id,
+                created_at,
+                model,
+                ..
+            } => {
                 if self.header.is_some() {
-                    return Err(invalid("", "duplicate ResponseStart"));
+                    return Err(invalid("", "duplicate Start"));
                 }
-                let id = id
-                    .as_ref()
-                    .ok_or_else(|| unrepresentable("/id", "required id missing"))?;
                 let model = model
                     .as_ref()
                     .ok_or_else(|| unrepresentable("/model", "required model missing"))?;
-                let created = self.options.created_at.ok_or_else(|| {
-                    unrepresentable(
-                        "/created",
-                        "required created missing; supply options.created_at",
-                    )
-                })?;
+                let created = created_at
+                    .provider_created_at
+                    .unwrap_or(created_at.observed_at);
                 self.header = Some(
-                    json!({"id":id,"model":model,"created":created,"object":"chat.completion.chunk"}),
+                    json!({"id":response_id,"model":model,"created":created,"object":"chat.completion.chunk"}),
                 );
                 self.delta(json!({"role":"assistant"}), out)?;
             }
-            StreamEvent::ItemStart { index, item } => {
+            StreamEvent::Metadata(scope) => {
                 if self.header.is_none() {
-                    return Err(invalid("", "ResponseStart required before stream content"));
+                    return Err(invalid("", "Start required before metadata"));
+                }
+                match scope {
+                    MetadataScope::Response { usage, model } => {
+                        if usage.is_some() {
+                            return Err(unrepresentable(
+                                "/usage",
+                                "provisional usage has no Chat Completions representation",
+                            ));
+                        }
+                        if let Some(model) = model {
+                            if let Some(header) = &mut self.header {
+                                header["model"] = json!(model);
+                            }
+                            self.chunk(json!([]), None, out)?;
+                        }
+                    }
+                    MetadataScope::Item {
+                        index,
+                        call_id,
+                        name,
+                        ..
+                    } => {
+                        let path = format!("/items/{index}");
+                        let item = self
+                            .items
+                            .get(index)
+                            .ok_or_else(|| invalid(&path, "metadata requires a started item"))?;
+                        if call_id.is_some() || name.is_some() {
+                            let EncodedKind::Tool(wire_index) = item.kind else {
+                                return Err(invalid(&path, "tool metadata requires a tool call"));
+                            };
+                            let mut call = json!({"index":wire_index,"function":{}});
+                            if let Some(call_id) = call_id {
+                                call["id"] = json!(call_id);
+                            }
+                            if let Some(name) = name {
+                                call["function"]["name"] = json!(name);
+                            }
+                            self.delta(json!({"tool_calls":[call]}), out)?;
+                        }
+                    }
+                }
+            }
+            StreamEvent::ItemStart { index, item, .. } => {
+                if self.header.is_none() {
+                    return Err(invalid("", "Start required before stream content"));
                 }
                 let path = format!("/items/{index}");
                 if self.items.contains_key(index) {
                     return Err(invalid(&path, "duplicate item index"));
                 }
+                if usize::try_from(*index).ok() != Some(self.items.len()) {
+                    return Err(invalid(&path, "index must follow ItemStart order"));
+                }
                 let kind = match item {
-                    StreamItem::Text => EncodedKind::Text,
-                    StreamItem::ToolCall { id, name } => {
+                    StreamItem::Text => {
+                        self.delta(json!({"content":""}), out)?;
+                        EncodedKind::Text
+                    }
+                    StreamItem::ToolCall { call_id, name } => {
                         let wire_index = self.next_tool_index;
                         self.next_tool_index = wire_index
                             .checked_add(1)
                             .ok_or_else(|| invalid(&path, "too many tools"))?;
                         let mut call = json!({"index":wire_index,"type":"function","function":{}});
-                        if let Some(id) = id {
+                        if let Some(id) = call_id {
                             call["id"] = json!(id);
                         }
                         if let Some(name) = name {
@@ -336,7 +435,7 @@ impl StreamEncoder for Encoder {
                         self.delta(json!({"tool_calls":[call]}), out)?;
                         EncodedKind::Tool(wire_index)
                     }
-                    StreamItem::Reasoning { .. } => {
+                    StreamItem::Reasoning => {
                         omit(&self.options, losses, LossScope::Reasoning, &path)?;
                         EncodedKind::Omitted(LossScope::Reasoning)
                     }

@@ -10,6 +10,7 @@ description = "Provider endpoint, authentication, request construction, and sole
 relay-protocol.workspace = true
 relay-bridge.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

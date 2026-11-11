@@ -4,12 +4,13 @@
 
 ```rust
 use relay_protocol::{
-    Message, Parameters, Reasoning, ReasoningEffort, ReasoningSummary,
+    Delivery, Message, Parameters, Reasoning, ReasoningEffort, ReasoningSummary,
     Request, ResponseFormat, TextPart, ThinkingMode, UserContent, Version,
 };
 
 let mut request = Request {
     version: Version::V1,
+    delivery: Some(Delivery { stream: true, stream_usage: true }),
     model: "target-model".into(),
     messages: vec![Message::User {
         content: vec![UserContent::Text(TextPart {
@@ -40,7 +41,8 @@ if let Message::User { content } = &mut request.messages[0] {
 }
 request.messages.push(Message::Assistant {
     content: vec![AssistantContent::ToolCall {
-        id: "call_1".into(), name: "lookup".into(),
+        id: "resp_previous:0".into(), provider_id: None,
+        call_id: "call_1".into(), name: "lookup".into(),
         arguments: r#"{ "key": "photo" }"#.into(), cache_control: None,
     }],
 });
@@ -74,6 +76,7 @@ let wire = serde_json::to_string_pretty(&request)?;
 ```json
 {
   "version": "1",
+  "delivery": {"stream": true, "stream_usage": true},
   "model": "target-model",
   "messages": [
     {
@@ -98,7 +101,8 @@ let wire = serde_json::to_string_pretty(&request)?;
       "content": [
         {
           "type": "tool_call",
-          "id": "call_1",
+          "id": "resp_previous:0",
+          "call_id": "call_1",
           "name": "lookup",
           "arguments": "{ \"key\": \"photo\" }"
         }
@@ -186,21 +190,26 @@ let wire = serde_json::to_string_pretty(&request)?;
 {
   "version": "1",
   "id": "resp_1",
+  "provider_id": "resp_1",
+  "created_at": {"observed_at": 1235, "provider_created_at": 1234},
   "model": "target-model",
   "content": [
     {
       "type": "text",
+      "id": "resp_1:0",
       "text": "조회했어"
     },
     {
       "type": "tool_call",
-      "id": "call_2",
+      "id": "resp_1:1",
+      "call_id": "call_2",
       "name": "lookup",
       "arguments": "{ \"key\":1, \"key\": 2 }"
     },
     {
       "type": "reasoning",
       "id": "reasoning_1",
+      "provider_id": "reasoning_1",
       "summary": [
         "조회 필요"
       ],
@@ -208,10 +217,12 @@ let wire = serde_json::to_string_pretty(&request)?;
     },
     {
       "type": "reasoning",
+      "id": "resp_1:3",
       "text": ""
     },
     {
       "type": "unknown",
+      "id": "resp_1:4",
       "value": {
         "type": "future_output",
         "payload": 7
@@ -234,19 +245,19 @@ use relay_protocol::{AssistantContent, Response, StopReason};
 let response: Response = serde_json::from_slice(&response_bytes)?;
 for part in &response.content {
     match part {
-        AssistantContent::Text(part) => println!("{}", part.text),
-        AssistantContent::ToolCall { id, name, arguments, .. } => {
-            println!("{id}: {name}({arguments})");
+        AssistantContent::Text { text, .. } => println!("{text}"),
+        AssistantContent::ToolCall { call_id, name, arguments, .. } => {
+            println!("{call_id}: {name}({arguments})");
         }
-        AssistantContent::Reasoning { id, text, summary, opaque } => {
+        AssistantContent::Reasoning { id, provider_id, text, summary, opaque } => {
             match text.as_deref() {
                 None => println!("추론 텍스트 없음"),
                 Some("") => println!("빈 추론 텍스트 있음"),
                 Some(text) => println!("{text}"),
             }
-            println!("ID: {id:?}, 요약: {summary:?}, 보존할 값: {opaque:?}");
+            println!("ID: {id}, 제공자 ID: {provider_id:?}, 요약: {summary:?}, 보존할 값: {opaque:?}");
         }
-        AssistantContent::Unknown { value } => println!("미해석 출력: {value}"),
+        AssistantContent::Unknown { value, .. } => println!("미해석 출력: {value}"),
     }
 }
 if let StopReason::Other(value) = &response.stop_reason {
@@ -257,16 +268,18 @@ if let StopReason::Other(value) = &response.stop_reason {
 ## StreamEvent 순서
 
 ```json
-{"type": "response_start", "id": "resp_1", "model": "target-model"}
-{"type": "item_start", "index": 0, "item": {"type": "reasoning", "id": "reasoning_1"}}
+{"type": "start", "response_id": "resp_1", "provider_id": "resp_1", "created_at": {"observed_at": 1235, "provider_created_at": 1234}, "model": "target-model"}
+{"type": "metadata", "scope": "response", "usage": {"input_tokens": 20, "output_tokens": 3}}
+{"type": "item_start", "index": 0, "id": "reasoning_1", "provider_id": "reasoning_1", "item": {"type": "reasoning"}}
 {"type": "delta", "index": 0, "delta": {"type": "reasoning_text", "text": "확인 중"}}
 {"type": "delta", "index": 0, "delta": {"type": "reasoning_summary", "summary_index": 0, "text": "조회"}}
 {"type": "delta", "index": 0, "delta": {"type": "reasoning_opaque", "value": "opaque-value"}}
 {"type": "item_end", "index": 0}
-{"type": "item_start", "index": 1, "item": {"type": "text"}}
+{"type": "item_start", "index": 1, "id": "resp_1:1", "item": {"type": "text"}}
 {"type": "delta", "index": 1, "delta": {"type": "text", "text": "답변"}}
 {"type": "item_end", "index": 1}
-{"type": "item_start", "index": 2, "item": {"type": "tool_call", "id": "call_1", "name": "lookup"}}
+{"type": "item_start", "index": 2, "id": "resp_1:2", "item": {"type": "tool_call"}}
+{"type": "metadata", "scope": "item", "index": 2, "call_id": "call_1", "name": "lookup"}
 {"type": "delta", "index": 2, "delta": {"type": "tool_call_arguments", "text": "{\"key\":"}}
 {"type": "delta", "index": 2, "delta": {"type": "tool_call_arguments", "text": "1}"}}
 {"type": "item_end", "index": 2}
@@ -310,37 +323,22 @@ fn describe(error: &RelayError) -> String {
 ## Gateway ingress
 
 ```rust
-use relay_bridge::{Bridge, ChatCompletionsBridge, ConversionOptions, Input};
+use relay_bridge::{Bridge, ChatCompletionsBridge, ConversionOptions, DecodeContext};
+use relay_protocol::Request;
 use relay_bridge::chat_completions::MaxTokensField;
 
 let client = ChatCompletionsBridge::new();
-let input: Input = client.decode_request(&client_body)?;
-println!("모델: {}, 스트림: {}", input.request.model, input.stream);
+let input: Request = client.decode_request(&client_body)?;
+println!("모델: {}, 전달: {:?}", input.model, input.delivery);
 
-let options = ConversionOptions {
-    created_at: Some(request_received_at),
-    ..Default::default()
-};
-let encoded = client.encode_response(&output, &options)?;
+let options = ConversionOptions::default();
+let context = DecodeContext { response_id: Some("fallback-id".into()), observed_at: 1235 };
+let output = client.decode_response(&provider_body, &context)?;
+let encoded = client.encode_response(&input, &output, &options)?;
 let client_json = encoded.body;
 let response_losses = encoded.losses;
 
 let legacy_server = ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens);
-```
-
-## Native fields
-
-```rust
-use relay_bridge::{ApiFormat, Input, NativeFields};
-use serde_json::json;
-
-let native = NativeFields::from_iter([("seed".into(), json!(42))]);
-let input = Input::with_native(
-    ApiFormat::CHAT_COMPLETIONS, request, false, native,
-);
-let same_format = input.native_for(&ApiFormat::CHAT_COMPLETIONS);
-let other_format = input.native_for(&ApiFormat::MESSAGES);
-println!("같은 형식: {same_format:?}, 다른 형식: {other_format:?}");
 ```
 
 ## ConversionOptions와 손실 보고
@@ -351,51 +349,48 @@ use relay_protocol::ConversionLoss;
 
 let options = ConversionOptions {
     allow_loss: [LossScope::UnknownContent].into(),
-    created_at: Some(request_received_at),
 };
-let encoded = client.encode_response(&output, &options)?;
+let encoded = client.encode_response(&input, &output, &options)?;
 for ConversionLoss { path, message } in encoded.losses {
     eprintln!("생략: {path}: {message}");
 }
 let client_json = encoded.body;
 ```
 
-`LossScope::Sampling`은 대상 형식이 표현할 수 없는 temperature·top_p 생략을,
-`LossScope::DeveloperRole`은 developer 역할이 없는 형식에서 system 역할로 전송하는 것을 허용한다.
-
 ## Custom Bridge 구현
 
 ```rust
 use relay_bridge::{
-    ApiFormat, Bridge, BridgeError, ConversionOptions, Encoded,
-    Input, Output, StreamDecoder, StreamEncoder,
+    ApiFormat, Bridge, BridgeError, ConversionOptions, DecodeContext, Encoded,
+    StreamDecoder, StreamEncoder,
 };
+use relay_protocol::{Request, Response};
 
 struct GatewayJsonBridge { format: ApiFormat }
 
 impl Bridge for GatewayJsonBridge {
     fn format(&self) -> &ApiFormat { &self.format }
 
-    fn decode_request(&self, body: &[u8]) -> Result<Input, BridgeError> {
+    fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
         todo!("요청 문법·표현 불가 오류는 BridgeError::Conversion")
     }
     fn encode_request(
-        &self, input: &Input, options: &ConversionOptions,
-    ) -> Result<Encoded, BridgeError> {
-        todo!("native 충돌·표현 불가는 Conversion, 허용한 생략은 losses")
-    }
-    fn decode_response(&self, body: &[u8]) -> Result<Output, BridgeError> {
-        todo!("성공 응답만 해석하고 해석 실패는 BridgeError::Decode")
-    }
-    fn encode_response(
-        &self, output: &Output, options: &ConversionOptions,
+        &self, request: &Request, options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
         todo!("표현 불가는 Conversion, 허용한 생략은 losses")
     }
-    fn stream_decoder(&self) -> Box<dyn StreamDecoder> {
+    fn decode_response(&self, body: &[u8], context: &DecodeContext) -> Result<Response, BridgeError> {
+        todo!("성공 응답만 해석하고 해석 실패는 BridgeError::Decode")
+    }
+    fn encode_response(
+        &self, request: &Request, response: &Response, options: &ConversionOptions,
+    ) -> Result<Encoded, BridgeError> {
+        todo!("표현 불가는 Conversion, 허용한 생략은 losses")
+    }
+    fn stream_decoder(&self, context: &DecodeContext) -> Box<dyn StreamDecoder> {
         Box::new(GatewayJsonDecoder { stopped: false })
     }
-    fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn StreamEncoder> {
+    fn stream_encoder(&self, request: &Request, options: &ConversionOptions) -> Box<dyn StreamEncoder> {
         Box::new(GatewayJsonEncoder { options: options.clone() })
     }
 }
@@ -537,11 +532,8 @@ async fn complete(
     let headers = headers_of(&response)?;
     let body = response.bytes().await?;
     let output = adapter.parse_response(status, &headers, &body)?;
-    let options = ConversionOptions {
-        created_at: Some(request_received_at),
-        ..Default::default()
-    };
-    let encoded = client.encode_response(&output, &options)?;
+    let options = ConversionOptions::default();
+    let encoded = client.encode_response(&input, &output, &options)?;
     Ok(encoded)
 }
 ```
@@ -553,7 +545,7 @@ use std::sync::Arc;
 use relay_adapter::{AdapterExt, ChatCompletionsErrors, ErrorEncoder};
 
 let mut input = client.decode_request(&client_body)?;
-input.stream = true;
+input.delivery = Some(relay_protocol::Delivery { stream: true, stream_usage: true });
 let (request, request_losses) = adapter.build_request(&input)?;
 for loss in request_losses { eprintln!("요청 생략: {loss}"); }
 let mut response = send(&http, request).await?;
@@ -567,11 +559,8 @@ let stream = match adapter.open_stream(status, &headers) {
     }
 };
 let errors: Arc<dyn ErrorEncoder> = Arc::new(ChatCompletionsErrors::new());
-let options = ConversionOptions {
-    created_at: Some(request_received_at),
-    ..Default::default()
-};
-let mut transcoder = stream.transcode(&client, &options, errors);
+let options = ConversionOptions::default();
+let mut transcoder = stream.transcode(&client, &input, &options, errors);
 ```
 ```rust
 use relay_adapter::Outcome;
@@ -594,9 +583,6 @@ match &report.outcome {
     None => println!("아직 실행 중이거나 중단됨"),
 }
 ```
-
-`report().losses`는 push·finish 중 생략이 발생할 때마다 누적되며 실패 후에도 남는다.
-전송 단절·취소로 finish 없이 중단할 때도 drop 전에 report를 읽어 이미 발생한 손실을 보관할 수 있다.
 
 ## 스트리밍 B: AdapterStream 직접
 
@@ -638,7 +624,7 @@ use relay_bridge::{Bridge, ConversionOptions};
 use relay_protocol::RelayError;
 
 fn ingress_error(client: &dyn Bridge, errors: &dyn ErrorEncoder, body: &[u8])
-    -> Result<relay_bridge::Input, EncodedError>
+    -> Result<relay_protocol::Request, EncodedError>
 {
     client.decode_request(body).map_err(|error| {
         errors.encode_error(&RelayError::from(error), Stage::Request)
@@ -647,7 +633,7 @@ fn ingress_error(client: &dyn Bridge, errors: &dyn ErrorEncoder, body: &[u8])
 
 let output = adapter.parse_response(status, &headers, &body)
     .map_err(|error| errors.encode_error(&error, Stage::Response))?;
-let encoded = client.encode_response(&output, &ConversionOptions::default())
+let encoded = client.encode_response(&input, &output, &ConversionOptions::default())
     .map_err(|error| errors.encode_error(&error.into(), Stage::Response))?;
 ```
 ```rust
@@ -846,24 +832,37 @@ let body = response.bytes().await?;
 let output = adapter.parse_response(status, &headers, &body)?;
 ```
 
-# 4. 오류 결과 표
+## ID 생성기와 시계 주입
 
-| 상황 | RelayError 결과 | 클라이언트 인코더 출력 |
-| --- | --- | --- |
-| 요청의 Unknown 콘텐츠를 손실 허용 없이 인코딩 | `Conversion(Unrepresentable)` | 요청 단계 400 |
-| bridge와 어댑터의 API 형식 불일치 | `Configuration` | 응답 전이라면 요청 단계 400 또는 소비자 설정 오류 정책 |
-| 503의 비JSON 오류 본문, 테스트 어댑터가 busy로 분류 | `Provider(Overloaded)`, 상태 503·요청 ID 보존 | 결과 단계 502 |
-| 200의 제공자 오류 본문, `text/plain`이어도 동일 | `Provider(Overloaded)`, 상태 200·요청 ID 보존 | 결과 단계 502 |
-| 비성공 HTTP를 어댑터가 잘못 성공 처리 | fallback `Provider(Unknown)`, 원래 상태 보존 | 결과 단계 502; Decode로 바뀌지 않음 |
-| 200의 잘못된 성공 본문 | `Decode` | 결과 단계 502 |
-| 스트림 HTTP 429, 빈 본문을 `classify` | `Provider(Overloaded)` 또는 미분류 fallback `Provider(Unknown)`, 상태 429 | 응답 시작 전 결과 단계 502 |
-| 정상 데이터 뒤 제공자 오류 프레임 | 이전 이벤트 뒤 `Provider(Overloaded)`, 요청 ID 보존·상태 `None` | 이전 프레임 뒤 `relay-error`; 합성 stop 없음 |
-| 같은 정상 프레임 안에서 이벤트 해석 실패 | 이전 이벤트 뒤 `Decode` | 이전 프레임 뒤 `relay-error` |
-| 정상 프레임 뒤 UTF-8 등 framing 실패 | 이전 이벤트 뒤 `Decode` | 이전 프레임 뒤 `relay-error` |
-| 정상 EOF인데 stop 없음 | 버퍼 이벤트 뒤 `IncompleteStream` | 이전 프레임 뒤 `relay-error`; 합성 완료 없음 |
-| 클라이언트 인코더 push가 일부 출력 후 실패 | `Conversion` | 부분 출력 뒤 `relay-error` |
-| 클라이언트 인코더 finish가 꼬리 출력 후 실패 | `Conversion` | 꼬리 출력 뒤 `relay-error` |
-| 정상 stop·finish, 허용한 생략 있음 | 오류 없음, `Outcome::Completed`와 손실 목록 | 정상 프레임과 인코더 꼬리 출력 |
-| 전송 단절·취소, finish 없이 drop | Relay 오류 없음, 진행 중 report의 outcome은 `None` | 자동 프레임 없음; `GatewayError::Transport` / `Cancelled`는 소비자 처리 |
-| 모델 탐색 미지원 | `UnsupportedOperation`, operation `list_models` | 결과 단계 502 또는 소비자 미지원 정책 |
-| 빈 모델 페이지와 다음 커서 | 오류 없음, 정상 `ModelPage` | 정상 목록 응답 |
+```rust
+let conversion = Conversion::new(bridge, &[ApiFormat::CHAT_COMPLETIONS], ConversionOptions::default())?
+    .with_id_generator(|| "response-fallback".into())
+    .with_clock(|| 1235);
+let context = conversion.decode_context();
+assert_eq!(context.response_id.as_deref(), Some("response-fallback"));
+assert_eq!(context.observed_at, 1235);
+```
+
+# 4. 오류 결과
+
+```json
+[
+  {"상황":"요청의 Unknown 콘텐츠를 손실 허용 없이 인코딩","결과":"Conversion(Unrepresentable)","클라이언트":"요청 단계 400"},
+  {"상황":"bridge와 어댑터의 API 형식 불일치","결과":"Configuration","클라이언트":"소비자 설정 오류 정책"},
+  {"상황":"503의 비JSON 오류 본문, 테스트 어댑터가 busy로 분류","결과":"Provider(Overloaded)","http_status":503,"클라이언트":"결과 단계 502"},
+  {"상황":"200의 제공자 오류 본문","결과":"Provider(Overloaded)","http_status":200,"클라이언트":"결과 단계 502"},
+  {"상황":"비성공 HTTP를 어댑터가 잘못 성공 처리","결과":"Provider(Unknown)","클라이언트":"결과 단계 502; 원래 상태 보존"},
+  {"상황":"200의 잘못된 성공 본문","결과":"Decode","클라이언트":"결과 단계 502"},
+  {"상황":"스트림 HTTP 429, 빈 본문을 classify","결과":"Provider(Overloaded) 또는 Provider(Unknown)","http_status":429,"클라이언트":"응답 시작 전 결과 단계 502"},
+  {"상황":"정상 데이터 뒤 제공자 오류 프레임","결과":"이전 이벤트 뒤 Provider(Overloaded)","http_status":null,"클라이언트":"이전 프레임 뒤 relay-error; 합성 stop 없음"},
+  {"상황":"같은 정상 프레임 안에서 이벤트 해석 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 relay-error"},
+  {"상황":"정상 프레임 뒤 framing 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 relay-error"},
+  {"상황":"정상 EOF인데 stop 없음","결과":"버퍼 이벤트 뒤 IncompleteStream","클라이언트":"이전 프레임 뒤 relay-error; 합성 완료 없음"},
+  {"상황":"클라이언트 인코더 push가 일부 출력 후 실패","결과":"Conversion","클라이언트":"부분 출력 뒤 relay-error"},
+  {"상황":"클라이언트 인코더 finish가 꼬리 출력 후 실패","결과":"Conversion","클라이언트":"꼬리 출력 뒤 relay-error"},
+  {"상황":"정상 stop·finish, 허용한 생략 있음","결과":"Outcome::Completed와 손실 목록","클라이언트":"정상 프레임과 인코더 꼬리 출력"},
+  {"상황":"전송 단절·취소, finish 없이 drop","outcome":null,"클라이언트":"자동 프레임 없음; Transport/Cancelled는 소비자 처리"},
+  {"상황":"모델 탐색 미지원","결과":"UnsupportedOperation(list_models)","클라이언트":"소비자 미지원 정책"},
+  {"상황":"빈 모델 페이지와 다음 커서","결과":"ModelPage","클라이언트":"정상 목록 응답"}
+]
+```

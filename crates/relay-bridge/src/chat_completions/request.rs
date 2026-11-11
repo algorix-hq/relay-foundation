@@ -3,28 +3,44 @@ use serde_json::{Map, Value, json};
 
 use super::*;
 
-pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
+pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
     let value = serde_json::from_slice(body).map_err(|e| invalid("", e.to_string()))?;
-    let mut native = object(value, "")?;
-    let model = required(&mut native, "model", "")?;
-    let messages: Vec<Value> = required(&mut native, "messages", "")?;
+    let mut fields = object(value, "")?;
+    let model = required(&mut fields, "model", "")?;
+    let messages: Vec<Value> = required(&mut fields, "messages", "")?;
     let messages = messages
         .into_iter()
         .enumerate()
         .map(|(i, m)| decode_message(m, &format!("/messages/{i}")))
         .collect::<Result<_, _>>()?;
-    let stream = optional(&mut native, "stream", "")?.unwrap_or(false);
-    let old_max: Option<u64> = optional(&mut native, "max_tokens", "")?;
-    let max: Option<u64> = optional(&mut native, "max_completion_tokens", "")?;
+    let stream = optional(&mut fields, "stream", "")?.unwrap_or(false);
+    let stream_usage = if let Some(value) = fields.remove("stream_options").filter(|v| !v.is_null())
+    {
+        let mut fields = object(value, "/stream_options")?;
+        let include_usage =
+            optional(&mut fields, "include_usage", "/stream_options")?.unwrap_or(false);
+        no_remaining(fields, "/stream_options")?;
+        include_usage
+    } else {
+        false
+    };
+    if stream_usage && !stream {
+        return Err(invalid(
+            "/stream_options/include_usage",
+            "usage streaming requires stream",
+        ));
+    }
+    let old_max: Option<u64> = optional(&mut fields, "max_tokens", "")?;
+    let max: Option<u64> = optional(&mut fields, "max_completion_tokens", "")?;
     if old_max.is_some() && max.is_some() && old_max != max {
         return Err(invalid(
             "/max_completion_tokens",
             "max_tokens and max_completion_tokens disagree",
         ));
     }
-    let temperature = optional(&mut native, "temperature", "")?;
-    let top_p = optional(&mut native, "top_p", "")?;
-    let stop = match native.remove("stop").filter(|v| !v.is_null()) {
+    let temperature = optional(&mut fields, "temperature", "")?;
+    let top_p = optional(&mut fields, "top_p", "")?;
+    let stop = match fields.remove("stop").filter(|v| !v.is_null()) {
         Some(Value::String(s)) => vec![s],
         Some(value) => parse(value, "/stop")?,
         None => Vec::new(),
@@ -37,8 +53,8 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
                 top_p,
                 stop,
             });
-    let definitions = native.remove("tools").filter(|v| !v.is_null());
-    let legacy = native.remove("functions").filter(|v| !v.is_null());
+    let definitions = fields.remove("tools").filter(|v| !v.is_null());
+    let legacy = fields.remove("functions").filter(|v| !v.is_null());
     if definitions.is_some() && legacy.is_some() {
         return Err(invalid(
             "/functions",
@@ -75,8 +91,8 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
             tools.push(decode_function(value, &format!("/functions/{i}"))?);
         }
     }
-    let choice = native.remove("tool_choice").filter(|v| !v.is_null());
-    let legacy_choice = native.remove("function_call").filter(|v| !v.is_null());
+    let choice = fields.remove("tool_choice").filter(|v| !v.is_null());
+    let legacy_choice = fields.remove("function_call").filter(|v| !v.is_null());
     if choice.is_some() && legacy_choice.is_some() {
         return Err(invalid(
             "/function_call",
@@ -90,38 +106,38 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
     } else {
         None
     };
-    let parallel = optional(&mut native, "parallel_tool_calls", "")?;
+    let parallel = optional(&mut fields, "parallel_tool_calls", "")?;
     let tools =
         (!tools.is_empty() || choice.is_some() || parallel.is_some()).then_some(ToolConfig {
             definitions: tools,
             choice,
             parallel,
         });
-    let response_format = native
+    let response_format = fields
         .remove("response_format")
         .filter(|v| !v.is_null())
         .map(decode_format)
         .transpose()?;
-    let reasoning = optional(&mut native, "reasoning_effort", "")?.map(|effort| Reasoning {
+    let reasoning = optional(&mut fields, "reasoning_effort", "")?.map(|effort| Reasoning {
         effort: Some(effort),
         budget_tokens: None,
         summary: None,
         thinking: None,
     });
-    Ok(Input::with_native(
-        ApiFormat::CHAT_COMPLETIONS,
-        Request {
-            version: Version::V1,
-            model,
-            messages,
-            tools,
-            parameters,
-            response_format,
-            reasoning,
-        },
-        stream,
-        native,
-    ))
+    no_remaining(fields, "")?;
+    Ok(Request {
+        version: Version::V1,
+        model,
+        messages,
+        tools,
+        parameters,
+        response_format,
+        reasoning,
+        delivery: (stream || stream_usage).then_some(Delivery {
+            stream,
+            stream_usage,
+        }),
+    })
 }
 
 fn decode_function(value: Value, path: &str) -> Result<Tool, BridgeError> {
@@ -204,7 +220,7 @@ fn decode_format(value: Value) -> Result<ResponseFormat, BridgeError> {
                 return Err(invalid(&format!("{path}/schema"), "expected schema object"));
             }
             let result = ResponseFormat::JsonSchema {
-                name: required(&mut schema, "name", path)?,
+                name: Some(required(&mut schema, "name", path)?),
                 description: optional(&mut schema, "description", path)?,
                 schema: schema_value,
                 strict: optional(&mut schema, "strict", path)?,
@@ -251,6 +267,7 @@ fn decode_text(value: Value, path: &str) -> Result<Vec<TextPart>, BridgeError> {
 }
 
 fn decode_message(value: Value, path: &str) -> Result<Message, BridgeError> {
+    let message_id = path;
     let mut value = object(value, path)?;
     let role: String = required(&mut value, "role", path)?;
     let content = value.remove("content");
@@ -309,7 +326,13 @@ fn decode_message(value: Value, path: &str) -> Result<Message, BridgeError> {
                 .transpose()?
                 .unwrap_or_default()
                 .into_iter()
-                .map(AssistantContent::Text)
+                .enumerate()
+                .map(|(index, part)| AssistantContent::Text {
+                    id: format!("{path}:{index}"),
+                    provider_id: None,
+                    text: part.text,
+                    cache_control: part.cache_control,
+                })
                 .collect::<Vec<_>>();
             if let Some(calls) = value.remove("tool_calls") {
                 for (i, call) in parse::<Vec<Value>>(calls, &format!("{path}/tool_calls"))?
@@ -318,7 +341,7 @@ fn decode_message(value: Value, path: &str) -> Result<Message, BridgeError> {
                 {
                     let path = format!("{path}/tool_calls/{i}");
                     let mut call = object(call, &path)?;
-                    let id = required(&mut call, "id", &path)?;
+                    let call_id = required(&mut call, "id", &path)?;
                     let kind: String = required(&mut call, "type", &path)?;
                     if kind != "function" {
                         return Err(unrepresentable(
@@ -336,7 +359,9 @@ fn decode_message(value: Value, path: &str) -> Result<Message, BridgeError> {
                     no_remaining(function, &format!("{path}/function"))?;
                     no_remaining(call, &path)?;
                     parts.push(AssistantContent::ToolCall {
-                        id,
+                        id: format!("{message_id}:{}", parts.len()),
+                        provider_id: None,
+                        call_id,
                         name,
                         arguments,
                         cache_control: None,
@@ -437,11 +462,10 @@ fn decode_data_url(url: String, path: &str, allow_url: bool) -> Result<MediaSour
 }
 
 pub(super) fn encode(
-    input: &Input,
+    request: &Request,
     options: &ConversionOptions,
     max_field: MaxTokensField,
 ) -> Result<Encoded, BridgeError> {
-    let request = &input.request;
     let mut losses = Vec::new();
     let mut messages = Vec::new();
     for (i, message) in request.messages.iter().enumerate() {
@@ -457,7 +481,20 @@ pub(super) fn encode(
         ("model".into(), json!(request.model)),
         ("messages".into(), json!(messages)),
     ]);
-    body.insert("stream".into(), json!(input.stream));
+    if let Some(delivery) = request.delivery {
+        if delivery.stream_usage && !delivery.stream {
+            return Err(invalid(
+                "/delivery/stream_usage",
+                "usage streaming requires stream",
+            ));
+        }
+        if delivery.stream {
+            body.insert("stream".into(), json!(true));
+            if delivery.stream_usage {
+                body.insert("stream_options".into(), json!({"include_usage": true}));
+            }
+        }
+    }
     if let Some(parameters) = &request.parameters {
         if let Some(max) = parameters.max_output_tokens {
             body.insert(
@@ -571,6 +608,12 @@ pub(super) fn encode(
                     schema,
                     strict,
                 } => {
+                    let name = name.as_ref().ok_or_else(|| {
+                        unrepresentable(
+                            "/response_format/name",
+                            "Chat Completions requires a schema name",
+                        )
+                    })?;
                     if !schema.is_object() {
                         return Err(unrepresentable(
                             "/response_format/schema",
@@ -592,7 +635,6 @@ pub(super) fn encode(
             },
         );
     }
-    merge(&mut body, input.native_for(&ApiFormat::CHAT_COMPLETIONS))?;
     Ok(Encoded {
         body: Value::Object(body),
         losses,

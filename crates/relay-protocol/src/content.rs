@@ -126,9 +126,19 @@ pub enum ToolResultContent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AssistantContent {
-    Text(#[serde(with = "TextPartFields")] TextPart),
+    Text {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
     ToolCall {
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
+        call_id: String,
         name: String,
         /// Exact JSON text, preserving whitespace, key order, and duplicate keys.
         arguments: String,
@@ -136,11 +146,9 @@ pub enum AssistantContent {
         cache_control: Option<CacheControl>,
     },
     Reasoning {
-        /// Provider-issued identifier of this reasoning item, present only if
-        /// the provider sent it, never synthesized. Some targets need it to
-        /// accept the item in a later request.
+        id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
+        provider_id: Option<String>,
         /// Presence, even when empty, differs from absence and must be preserved
         /// so bridges can restore the original block kind.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -156,6 +164,9 @@ pub enum AssistantContent {
     /// It has no neutral meaning and cannot be encoded into a request;
     /// bridges reject it as unrepresentable.
     Unknown {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
         value: Value,
     },
 }

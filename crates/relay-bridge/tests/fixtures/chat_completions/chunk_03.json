@@ -1,1 +1,1 @@
-{"id":"chatcmpl_fixture","created":1234,"model":"test-model","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"Seoul\"}"}},{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":null}]}
+{"id":"chatcmpl_fixture","created":1234,"model":"test-model","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","function":{"name":"weather","arguments":"\"Seoul\"}"}},{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":null}]}

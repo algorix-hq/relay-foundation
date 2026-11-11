@@ -23,6 +23,18 @@ pub struct Request {
     pub response_format: Option<ResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
+    /// How the response is delivered, not what the model produces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<Delivery>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Delivery {
+    #[serde(default)]
+    pub stream: bool,
+    #[serde(default)]
+    pub stream_usage: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -43,7 +55,7 @@ pub enum ResponseFormat {
     Text,
     JsonObject,
     JsonSchema {
-        name: String,
+        name: Option<String>,
         description: Option<String>,
         schema: Value,
         strict: Option<bool>,
@@ -61,10 +73,15 @@ impl Serialize for ResponseFormat {
                 schema,
                 strict,
             } => {
-                let fields = 3 + usize::from(description.is_some()) + usize::from(strict.is_some());
+                let fields = 2
+                    + usize::from(name.is_some())
+                    + usize::from(description.is_some())
+                    + usize::from(strict.is_some());
                 let mut object = serializer.serialize_struct("ResponseFormat", fields)?;
                 object.serialize_field("type", "json_schema")?;
-                object.serialize_field("name", name)?;
+                if let Some(name) = name {
+                    object.serialize_field("name", name)?;
+                }
                 if let Some(description) = description {
                     object.serialize_field("description", description)?;
                 }
@@ -102,7 +119,7 @@ impl<'de> Deserialize<'de> for ResponseFormat {
                 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
                 enum Object {
                     JsonSchema {
-                        name: String,
+                        name: Option<String>,
                         description: Option<String>,
                         schema: Value,
                         strict: Option<bool>,

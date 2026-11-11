@@ -1,11 +1,16 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use relay_bridge::{ApiFormat, Bridge, ConversionOptions};
+use relay_bridge::{ApiFormat, Bridge, ConversionOptions, DecodeContext};
 use relay_protocol::ConfigurationError;
 
 pub struct Conversion {
     bridge: Arc<dyn Bridge>,
     options: ConversionOptions,
+    id_generator: Arc<dyn Fn() -> String + Send + Sync>,
+    clock: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
 impl Conversion {
@@ -27,7 +32,38 @@ impl Conversion {
                 ),
             });
         }
-        Ok(Self { bridge, options })
+        Ok(Self {
+            bridge,
+            options,
+            id_generator: Arc::new(|| uuid::Uuid::new_v4().to_string()),
+            clock: Arc::new(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            }),
+        })
+    }
+
+    pub fn with_id_generator(
+        mut self,
+        generator: impl Fn() -> String + Send + Sync + 'static,
+    ) -> Self {
+        self.id_generator = Arc::new(generator);
+        self
+    }
+
+    pub fn with_clock(mut self, clock: impl Fn() -> u64 + Send + Sync + 'static) -> Self {
+        self.clock = Arc::new(clock);
+        self
+    }
+
+    pub fn decode_context(&self) -> DecodeContext {
+        let observed_at = (self.clock)();
+        DecodeContext {
+            response_id: Some((self.id_generator)()),
+            observed_at,
+        }
     }
 
     pub fn bridge(&self) -> &dyn Bridge {

@@ -8,13 +8,13 @@ use relay_adapter::{
     Method, ModelDiscovery, ModelPage, Outcome, ProviderRequest, Stage,
 };
 use relay_bridge::{
-    ApiFormat, Bridge, BridgeError, ConversionOptions, Encoded, Frame, Input, LossScope,
-    NativeFields, Output, StreamDecoder, StreamEncoder,
+    ApiFormat, Bridge, BridgeError, ConversionOptions, DecodeContext, Encoded, Frame, LossScope,
+    StreamDecoder, StreamEncoder,
 };
 use relay_protocol::{
     AssistantContent, ConfigurationError, ConversionError, ConversionErrorKind, ConversionLoss,
     DecodeError, IncompleteStream, Message, ProviderError, ProviderErrorCategory, RelayError,
-    Request, Response, StopReason, StreamEvent, Version,
+    Request, Response, StopReason, StreamEvent, Timestamp, Version,
 };
 use serde_json::{Value, json};
 
@@ -46,26 +46,17 @@ impl Bridge for TestBridge {
         &self.format
     }
 
-    fn decode_request(&self, body: &[u8]) -> Result<Input, BridgeError> {
-        let mut native: NativeFields = serde_json::from_slice(body).map_err(invalid)?;
-        let request = serde_json::from_value(native.remove("request").unwrap_or(Value::Null))
-            .map_err(invalid)?;
-        let stream = serde_json::from_value(native.remove("stream").unwrap_or(Value::Null))
-            .map_err(invalid)?;
-        Ok(Input::with_native(
-            self.format.clone(),
-            request,
-            stream,
-            native,
-        ))
+    fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
+        let value: Value = serde_json::from_slice(body).map_err(invalid)?;
+        Ok(serde_json::from_value(value["request"].clone()).map_err(invalid)?)
     }
 
     fn encode_request(
         &self,
-        input: &Input,
+        input: &Request,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        let mut request = input.request.clone();
+        let mut request = input.clone();
         let mut losses = Vec::new();
         for (message_index, message) in request.messages.iter_mut().enumerate() {
             if let Message::Assistant { content } = message {
@@ -86,47 +77,43 @@ impl Bridge for TestBridge {
                 *content = retained;
             }
         }
-        let mut body = NativeFields::from_iter([
-            ("request".into(), json!(request)),
-            ("stream".into(), json!(input.stream)),
-        ]);
-        if let Some(native) = input.native_for(self.format()) {
-            body.extend(native.clone());
-        }
         Ok(Encoded {
-            body: Value::Object(body),
+            body: json!({"request": request, "stream": input.delivery.is_some_and(|delivery| delivery.stream)}),
             losses,
         })
     }
 
-    fn decode_response(&self, body: &[u8]) -> Result<Output, BridgeError> {
+    fn decode_response(
+        &self,
+        body: &[u8],
+        _context: &DecodeContext,
+    ) -> Result<Response, BridgeError> {
         self.decoded_responses.fetch_add(1, Ordering::Relaxed);
-        let mut native: NativeFields = serde_json::from_slice(body).map_err(decode_error)?;
-        let response = serde_json::from_value(native.remove("response").unwrap_or(Value::Null))
-            .map_err(decode_error)?;
-        Ok(Output::with_native(self.format.clone(), response, native))
+        let value: Value = serde_json::from_slice(body).map_err(decode_error)?;
+        Ok(serde_json::from_value(value["response"].clone()).map_err(decode_error)?)
     }
 
     fn encode_response(
         &self,
-        output: &Output,
+        _request: &Request,
+        response: &Response,
         _options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        let mut body = NativeFields::from_iter([("response".into(), json!(output.response))]);
-        if let Some(native) = output.native_for(self.format()) {
-            body.extend(native.clone());
-        }
         Ok(Encoded {
-            body: Value::Object(body),
+            body: json!({"response": response}),
             losses: Vec::new(),
         })
     }
 
-    fn stream_decoder(&self) -> Box<dyn StreamDecoder> {
+    fn stream_decoder(&self, _context: &DecodeContext) -> Box<dyn StreamDecoder> {
         Box::new(TestStreamDecoder { stopped: false })
     }
 
-    fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn StreamEncoder> {
+    fn stream_encoder(
+        &self,
+        _request: &Request,
+        options: &ConversionOptions,
+    ) -> Box<dyn StreamEncoder> {
         Box::new(TestStreamEncoder {
             allow_unknown: options.allow_loss.contains(&LossScope::UnknownContent),
             fail_finish: self.fail_encoder_finish,
@@ -421,13 +408,16 @@ fn request() -> Request {
         parameters: None,
         response_format: None,
         reasoning: None,
+        delivery: None,
     }
 }
 
-const START: &[u8] = b"[{\"type\":\"response_start\"}]\n";
+const START: &[u8] =
+    b"[{\"type\":\"start\",\"response_id\":\"r\",\"created_at\":{\"observed_at\":7}}]\n";
 const STOP: &[u8] = b"[{\"type\":\"stop\",\"stop_reason\":\"end_turn\"}]\n";
 const FAILURE: &[u8] = b"{\"type\":\"failure\",\"code\":\"busy\"}\n";
-const UNKNOWN: &[u8] = b"[{\"type\":\"item_start\",\"index\":0,\"item\":{\"type\":\"unknown\"}}]\n";
+const UNKNOWN: &[u8] =
+    b"[{\"type\":\"item_start\",\"index\":0,\"id\":\"r:0\",\"item\":{\"type\":\"unknown\"}}]\n";
 
 #[test]
 fn gateway_converts_between_client_and_provider_formats() {
@@ -448,12 +438,19 @@ fn gateway_converts_between_client_and_provider_formats() {
 
     let response = Response {
         version: Version::V1,
-        id: Some("response-1".into()),
+        id: "response-1".into(),
+        provider_id: Some("response-1".into()),
+        created_at: Timestamp {
+            observed_at: 7,
+            provider_created_at: None,
+        },
         model: "test-model".into(),
-        content: vec![AssistantContent::Text(relay_protocol::TextPart {
+        content: vec![AssistantContent::Text {
+            id: "response-1:0".into(),
+            provider_id: None,
             text: "world".into(),
             cache_control: None,
-        })],
+        }],
         stop_reason: StopReason::EndTurn,
         usage: None,
     };
@@ -463,42 +460,18 @@ fn gateway_converts_between_client_and_provider_formats() {
         .parse_response(200, &Headers::default(), &response_body)
         .expect("provider response");
     let encoded = client
-        .encode_response(&output, &ConversionOptions::default())
+        .encode_response(&input, &output, &ConversionOptions::default())
         .expect("client response");
     assert_eq!(encoded.body, json!({"response": response}));
     assert_eq!(
         adapter
             .conversion()
             .bridge()
-            .encode_response(&output, adapter.conversion().options())
+            .encode_response(&input, &output, adapter.conversion().options())
             .expect("same format")
             .body,
-        json!({"response": response, "provider-tier": "test"})
+        json!({"response": response})
     );
-}
-
-#[test]
-fn native_request_fields_only_reach_a_same_format_bridge() {
-    let adapter = TestAdapter::default();
-    for (bridge, forwarded) in [
-        (TestBridge::client(), false),
-        (TestBridge::provider(), true),
-    ] {
-        let input = bridge
-            .decode_request(
-                &serde_json::to_vec(&json!({
-                    "request": request(), "stream": false, "native-option": 7
-                }))
-                .expect("wire request"),
-            )
-            .expect("ingress");
-        let (req, _) = adapter.build_request(&input).expect("request");
-        let body: Value = serde_json::from_slice(&req.body).expect("provider body");
-        assert_eq!(
-            body["wire"].get("native-option"),
-            forwarded.then_some(&json!(7))
-        );
-    }
 }
 
 #[test]
@@ -610,13 +583,19 @@ fn mid_stream_provider_failure_follows_data_and_keeps_header_request_id() {
             &Headers(vec![("Request-ID".into(), "stream-request".into())]),
         )
         .expect("stream");
-    assert!(stream.push(b"[{\"type\":\"response_").next().is_none());
-    let bytes = [b"start\"}]\n".as_slice(), FAILURE, STOP].concat();
+    let split = 12;
+    assert!(stream.push(&START[..split]).next().is_none());
+    let bytes = [&START[split..], FAILURE, STOP].concat();
     assert_eq!(
         stream.push(&bytes).collect::<Vec<_>>(),
         vec![
-            Ok(StreamEvent::ResponseStart {
-                id: None,
+            Ok(StreamEvent::Start {
+                response_id: "r".into(),
+                provider_id: None,
+                created_at: Timestamp {
+                    observed_at: 7,
+                    provider_created_at: None
+                },
                 model: None
             }),
             Err(RelayError::Provider(ProviderError {
@@ -636,13 +615,18 @@ fn bridge_decode_failure_preserves_events_from_the_same_frame() {
         .open_stream(200, &Headers::default())
         .expect("stream");
     let items = stream
-        .push(b"[{\"type\":\"response_start\"},{\"type\":\"invalid\"}]\n")
+        .push(b"[{\"type\":\"start\",\"response_id\":\"r\",\"created_at\":{\"observed_at\":7}},{\"type\":\"invalid\"}]\n")
         .collect::<Vec<_>>();
     assert_eq!(items.len(), 2);
     assert_eq!(
         items[0],
-        Ok(StreamEvent::ResponseStart {
-            id: None,
+        Ok(StreamEvent::Start {
+            response_id: "r".into(),
+            provider_id: None,
+            created_at: Timestamp {
+                observed_at: 7,
+                provider_created_at: None
+            },
             model: None
         })
     );
@@ -663,8 +647,13 @@ fn malformed_framing_preserves_preceding_frames() {
     assert_eq!(items.len(), 2);
     assert_eq!(
         items[0],
-        Ok(StreamEvent::ResponseStart {
-            id: None,
+        Ok(StreamEvent::Start {
+            response_id: "r".into(),
+            provider_id: None,
+            created_at: Timestamp {
+                observed_at: 7,
+                provider_created_at: None
+            },
             model: None
         })
     );
@@ -682,8 +671,13 @@ fn eof_flushes_buffered_events_then_reports_incomplete_stream_without_a_stop() {
     assert_eq!(items.len(), 2);
     assert_eq!(
         items[0],
-        Ok(StreamEvent::ResponseStart {
-            id: None,
+        Ok(StreamEvent::Start {
+            response_id: "r".into(),
+            provider_id: None,
+            created_at: Timestamp {
+                observed_at: 7,
+                provider_created_at: None
+            },
             model: None
         })
     );
@@ -700,15 +694,18 @@ fn transcoder_emits_prior_frames_then_one_provider_error_and_stops() {
         .expect("stream")
         .transcode(
             &TestBridge::client(),
+            &request(),
             &ConversionOptions {
                 allow_loss: [LossScope::UnknownContent].into(),
-                ..Default::default()
             },
             Arc::new(TestErrorEncoder),
         );
     let frames = transcoder.push(&[START, UNKNOWN, FAILURE, STOP].concat());
     assert_eq!(frames.len(), 2);
-    assert_eq!(frames[0].data, "{\"type\":\"response_start\"}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&frames[0].data).expect("start"),
+        json!({"type":"start","response_id":"r","created_at":{"observed_at":7}})
+    );
     assert_eq!(frames[1].event.as_deref(), Some("relay-error"));
     assert!(frames[1].data.contains("provider is busy"));
     assert_eq!(
@@ -734,6 +731,7 @@ fn transcoder_encodes_client_push_failure_after_partial_encoder_output() {
         .expect("stream")
         .transcode(
             &TestBridge::client(),
+            &request(),
             &ConversionOptions::default(),
             Arc::new(TestErrorEncoder),
         );
@@ -765,6 +763,7 @@ fn transcoder_encodes_client_finish_failure_after_encoder_tail() {
         .expect("stream")
         .transcode(
             &client,
+            &request(),
             &ConversionOptions::default(),
             Arc::new(TestErrorEncoder),
         );
@@ -793,9 +792,9 @@ fn successful_transcode_flushes_stop_reports_losses_and_completes() {
         .expect("stream")
         .transcode(
             &TestBridge::client(),
+            &request(),
             &ConversionOptions {
                 allow_loss: [LossScope::UnknownContent].into(),
-                ..Default::default()
             },
             Arc::new(TestErrorEncoder),
         );
@@ -828,9 +827,9 @@ fn abandoning_a_transcode_does_not_report_incomplete_or_completed() {
         .expect("stream")
         .transcode(
             &TestBridge::client(),
+            &request(),
             &ConversionOptions {
                 allow_loss: [LossScope::UnknownContent].into(),
-                ..Default::default()
             },
             Arc::new(TestErrorEncoder),
         );
@@ -894,10 +893,12 @@ fn build_request_requires_loss_permission_and_returns_encode_losses() {
     let mut request = request();
     request.messages.push(Message::Assistant {
         content: vec![AssistantContent::Unknown {
+            id: "r:0".into(),
+            provider_id: None,
             value: json!({"future": 1}),
         }],
     });
-    let input = Input::new(request);
+    let input = request;
     assert!(matches!(
         TestAdapter::default().build_request(&input),
         Err(RelayError::Conversion(ConversionError {
@@ -909,7 +910,6 @@ fn build_request_requires_loss_permission_and_returns_encode_losses() {
         Arc::new(TestBridge::provider()),
         ConversionOptions {
             allow_loss: [LossScope::UnknownContent].into(),
-            ..Default::default()
         },
     );
     let (req, losses) = adapter.build_request(&input).expect("explicit omission");
@@ -922,4 +922,63 @@ fn build_request_requires_loss_permission_and_returns_encode_losses() {
     );
     let body: Value = serde_json::from_slice(&req.body).expect("provider body");
     assert_eq!(body["wire"]["request"]["messages"][0]["content"], json!([]));
+}
+
+#[test]
+fn injected_generator_and_clock_supply_exact_response_and_stream_identity() {
+    let adapter = TestAdapter {
+        conversion: Conversion::new(
+            Arc::new(relay_bridge::ChatCompletionsBridge::new()),
+            &[ApiFormat::CHAT_COMPLETIONS],
+            ConversionOptions::default(),
+        )
+        .expect("compatible")
+        .with_id_generator(|| "injected-response".into())
+        .with_clock(|| 123),
+        discovery: false,
+        lenient: false,
+    };
+    let body = json!({"object":"chat.completion","model":"m","choices":[{
+        "message":{"role":"assistant","content":"answer"},"finish_reason":"stop"
+    }]});
+    let response = adapter
+        .parse_response(
+            200,
+            &Headers::default(),
+            &serde_json::to_vec(&body).expect("JSON"),
+        )
+        .expect("response");
+    assert_eq!(response.id, "injected-response");
+    assert_eq!(response.provider_id, None);
+    assert_eq!(
+        response.created_at,
+        Timestamp {
+            observed_at: 123,
+            provider_created_at: None
+        }
+    );
+
+    let mut stream = adapter
+        .open_stream(200, &Headers::default())
+        .expect("stream");
+    let chunk = json!({"object":"chat.completion.chunk","model":"m","choices":[{
+        "delta":{"content":"answer"},"finish_reason":"stop"
+    }]});
+    let events = stream
+        .push(format!("{chunk}\n[DONE]\n").as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("events");
+    assert_eq!(
+        events[0],
+        StreamEvent::Start {
+            response_id: "injected-response".into(),
+            provider_id: None,
+            created_at: Timestamp {
+                observed_at: 123,
+                provider_created_at: None
+            },
+            model: Some("m".into()),
+        }
+    );
+    assert!(stream.finish().next().is_none());
 }
