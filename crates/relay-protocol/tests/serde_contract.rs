@@ -1,8 +1,8 @@
 use relay_protocol::{
     AssistantContent, CacheControl, ConfigurationError, ConversionError, ConversionErrorKind,
     DecodeError, IncompleteStream, Message, ProviderError, ProviderErrorCategory, ReasoningEffort,
-    RelayError, Request, Response, ResponseFormat, RetryAfter, StopReason, StreamEvent, ToolChoice,
-    UnsupportedOperation, UserContent,
+    RelayError, Request, Response, ResponseFormat, RetryAfter, StopReason, StreamEvent, StreamItem,
+    ToolChoice, UnsupportedOperation, UserContent,
 };
 use serde_json::{Value, json};
 
@@ -71,7 +71,7 @@ fn full_response_preserves_opaque_reasoning_usage_and_unknown_items() {
     let wire = json!({
         "version": "1", "id": "resp_1", "model": "custom-model",
         "content": [
-            {"type": "reasoning", "text": "Thinking", "summary": ["One", "Two"],
+            {"type": "reasoning", "id": "reasoning_1", "text": "Thinking", "summary": ["One", "Two"],
                 "opaque": "opaque-value"},
             {"type": "text", "text": "Answer", "cache_control": {}},
             {"type": "tool_call", "id": "call_1", "name": "lookup", "arguments": "{ \"a\": 1 }"},
@@ -246,11 +246,16 @@ fn absent_optional_fields_and_empty_collections_serialize_without_placeholders()
         })
     );
     let content: AssistantContent = serde_json::from_value(json!({
-        "type": "reasoning", "summary": [], "text": null
+        "type": "reasoning", "id": null, "summary": [], "text": null
     }))
     .unwrap();
     assert_eq!(
         serde_json::to_value(content).unwrap(),
+        json!({"type": "reasoning"})
+    );
+    let item: StreamItem = serde_json::from_value(json!({"type": "reasoning"})).unwrap();
+    assert_eq!(
+        serde_json::to_value(item).unwrap(),
         json!({"type": "reasoning"})
     );
 }
@@ -259,7 +264,7 @@ fn absent_optional_fields_and_empty_collections_serialize_without_placeholders()
 fn normal_stream_sequence_preserves_item_indices_and_delta_kinds() {
     let wire = json!([
         {"type": "response_start", "id": "resp_1", "model": "m"},
-        {"type": "item_start", "index": 0, "item": {"type": "reasoning"}},
+        {"type": "item_start", "index": 0, "item": {"type": "reasoning", "id": "reasoning_1"}},
         {"type": "delta", "index": 0, "delta": {"type": "reasoning_text", "text": "Think"}},
         {"type": "delta", "index": 0, "delta": {"type": "reasoning_summary", "summary_index": 1, "text": "Summary"}},
         {"type": "delta", "index": 0, "delta": {"type": "reasoning_opaque", "value": "opaque-value"}},

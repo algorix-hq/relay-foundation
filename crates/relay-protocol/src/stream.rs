@@ -48,8 +48,13 @@ pub enum StreamItem {
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
-    #[serde(deserialize_with = "deserialize_empty_item")]
-    Reasoning,
+    Reasoning {
+        /// Provider-issued identifier of this reasoning item, present only if
+        /// the provider sent it, never synthesized. Some targets need it to
+        /// accept the item in a later request.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     /// Unrecognized provider output preserved so already-generated output is not lost.
     /// It has no neutral meaning and cannot be encoded into a request;
     /// bridges reject it as unrepresentable.

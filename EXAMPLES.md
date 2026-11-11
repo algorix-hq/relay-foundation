@@ -200,6 +200,7 @@ let wire = serde_json::to_string_pretty(&request)?;
     },
     {
       "type": "reasoning",
+      "id": "reasoning_1",
       "summary": [
         "조회 필요"
       ],
@@ -237,13 +238,13 @@ for part in &response.content {
         AssistantContent::ToolCall { id, name, arguments, .. } => {
             println!("{id}: {name}({arguments})");
         }
-        AssistantContent::Reasoning { text, summary, opaque } => {
+        AssistantContent::Reasoning { id, text, summary, opaque } => {
             match text.as_deref() {
                 None => println!("추론 텍스트 없음"),
                 Some("") => println!("빈 추론 텍스트 있음"),
                 Some(text) => println!("{text}"),
             }
-            println!("요약: {summary:?}, 보존할 값: {opaque:?}");
+            println!("ID: {id:?}, 요약: {summary:?}, 보존할 값: {opaque:?}");
         }
         AssistantContent::Unknown { value } => println!("미해석 출력: {value}"),
     }
@@ -257,7 +258,7 @@ if let StopReason::Other(value) = &response.stop_reason {
 
 ```json
 {"type": "response_start", "id": "resp_1", "model": "target-model"}
-{"type": "item_start", "index": 0, "item": {"type": "reasoning"}}
+{"type": "item_start", "index": 0, "item": {"type": "reasoning", "id": "reasoning_1"}}
 {"type": "delta", "index": 0, "delta": {"type": "reasoning_text", "text": "확인 중"}}
 {"type": "delta", "index": 0, "delta": {"type": "reasoning_summary", "summary_index": 0, "text": "조회"}}
 {"type": "delta", "index": 0, "delta": {"type": "reasoning_opaque", "value": "opaque-value"}}

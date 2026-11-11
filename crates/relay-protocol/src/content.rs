@@ -136,6 +136,11 @@ pub enum AssistantContent {
         cache_control: Option<CacheControl>,
     },
     Reasoning {
+        /// Provider-issued identifier of this reasoning item, present only if
+        /// the provider sent it, never synthesized. Some targets need it to
+        /// accept the item in a later request.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         /// Presence, even when empty, differs from absence and must be preserved
         /// so bridges can restore the original block kind.
         #[serde(skip_serializing_if = "Option::is_none")]
