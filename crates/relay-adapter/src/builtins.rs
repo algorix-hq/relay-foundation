@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use relay_bridge::{
     ApiFormat, Bridge, ChatCompletionsBridge, ConversionOptions, LossScope, MessagesBridge,
-    ResponsesBridge, chat_completions::MaxTokensField,
+    ResponsesBridge, chat_completions::MaxTokensField, responses::ResponsesBridgeConfig,
 };
 use relay_protocol::{ConfigurationError, DecodeError, ProviderError, Request};
 use serde_json::Value;
@@ -17,29 +17,34 @@ use crate::{
 /// present, milliseconds are rounded up to whole seconds.
 pub struct AnthropicAdapter {
     inner: Builtin,
+    base_url: String,
 }
 
-/// Defaults to Responses; `with_bridge` also accepts Chat Completions.
+/// Uses Responses. Chat Completions on OpenAI goes through `OpenAiCompatibleAdapter`.
 /// Retry-After takes precedence over retry-after-ms, which is rounded up to
 /// whole seconds when no Retry-After is present.
 pub struct OpenAiAdapter {
     inner: Builtin,
+    base_url: String,
 }
 
-/// Defaults to `max_tokens`, not `max_completion_tokens`, as documented by Ollama.
+/// `new` takes the full request URL. Defaults to Chat Completions with
+/// `max_tokens`, not `max_completion_tokens`, as documented by Ollama;
+/// `with_bridge` accepts any Chat Completions or Responses bridge.
 /// `api_error`, `not_found_error`, and all unrecognized types are ambiguous on
 /// compatible servers and use HTTP-status fallback, never message matching.
 /// Retry-After takes precedence over retry-after-ms; milliseconds alone are
 /// rounded up to whole seconds.
 pub struct OpenAiCompatibleAdapter {
     inner: Builtin,
+    url: String,
+    models_url: Option<String>,
     without_tool_choice: bool,
 }
 
 struct Builtin {
     conversion: Conversion,
     provider: Provider,
-    base_url: String,
     headers: Headers,
 }
 
@@ -47,17 +52,42 @@ impl AnthropicAdapter {
     pub fn new(api_key: impl Into<String>) -> Self {
         let mut inner = Builtin::new(
             Provider::Anthropic,
-            "https://api.anthropic.com".into(),
             Arc::new(MessagesBridge::new()),
             Some(api_key.into()),
         );
         inner.set_header("anthropic-version", "2026-10-21".into());
-        Self { inner }
+        Self {
+            inner,
+            base_url: "https://api.anthropic.com".into(),
+        }
+    }
+
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
     }
 
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.inner.set_header("anthropic-version", version.into());
         self
+    }
+
+    /// Used only when a request omits `parameters.max_output_tokens`.
+    pub fn default_max_tokens(mut self, max_tokens: u64) -> Self {
+        self.inner
+            .conversion
+            .set_bridge(Arc::new(MessagesBridge::with_default_max_tokens(
+                max_tokens,
+            )));
+        self
+    }
+
+    fn request_url(&self) -> Result<String, ConfigurationError> {
+        join(&self.base_url, "/v1/messages")
+    }
+
+    fn discovery(&self) -> Option<&dyn ModelDiscovery> {
+        Some(self)
     }
 }
 
@@ -66,11 +96,16 @@ impl OpenAiAdapter {
         Self {
             inner: Builtin::new(
                 Provider::OpenAi,
-                "https://api.openai.com/v1".into(),
                 Arc::new(ResponsesBridge::new()),
                 Some(api_key.into()),
             ),
+            base_url: "https://api.openai.com/v1".into(),
         }
+    }
+
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
     }
 
     pub fn organization(mut self, organization: impl Into<String>) -> Self {
@@ -83,19 +118,37 @@ impl OpenAiAdapter {
         self.inner.set_header("openai-project", project.into());
         self
     }
+
+    pub fn store(mut self, store: bool) -> Self {
+        self.inner
+            .conversion
+            .set_bridge(Arc::new(ResponsesBridge::with_config(
+                ResponsesBridgeConfig { store: Some(store) },
+            )));
+        self
+    }
+
+    fn request_url(&self) -> Result<String, ConfigurationError> {
+        join(&self.base_url, "/responses")
+    }
+
+    fn discovery(&self) -> Option<&dyn ModelDiscovery> {
+        Some(self)
+    }
 }
 
 impl OpenAiCompatibleAdapter {
-    pub fn new(base_url: impl Into<String>) -> Self {
+    pub fn new(url: impl Into<String>) -> Self {
         Self {
             inner: Builtin::new(
                 Provider::Compatible,
-                base_url.into(),
                 Arc::new(ChatCompletionsBridge::with_max_tokens_field(
                     MaxTokensField::MaxTokens,
                 )),
                 None,
             ),
+            url: url.into(),
+            models_url: None,
             without_tool_choice: false,
         }
     }
@@ -106,31 +159,40 @@ impl OpenAiCompatibleAdapter {
         self
     }
 
+    pub fn with_bridge(mut self, bridge: Arc<dyn Bridge>) -> Result<Self, ConfigurationError> {
+        self.inner
+            .conversion
+            .replace_bridge(bridge, &[ApiFormat::CHAT_COMPLETIONS, ApiFormat::RESPONSES])?;
+        Ok(self)
+    }
+
+    /// Enables model discovery; without it `list_models` is unsupported.
+    pub fn models_url(mut self, models_url: impl Into<String>) -> Self {
+        self.models_url = Some(models_url.into());
+        self
+    }
+
     /// Declares a server restriction, not a model capability. A request with any
     /// explicit tool choice is rejected before conversion or request assembly.
     pub fn without_tool_choice(mut self) -> Self {
         self.without_tool_choice = true;
         self
     }
+
+    fn request_url(&self) -> Result<String, ConfigurationError> {
+        required_url(&self.url, "url")
+    }
+
+    fn discovery(&self) -> Option<&dyn ModelDiscovery> {
+        self.models_url
+            .as_ref()
+            .map(|_| self as &dyn ModelDiscovery)
+    }
 }
 
 macro_rules! adapter {
     ($name:ident, $validate:expr) => {
         impl $name {
-            pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
-                self.inner.base_url = base_url.into();
-                self
-            }
-
-            pub fn with_bridge(
-                mut self,
-                bridge: Arc<dyn Bridge>,
-            ) -> Result<Self, ConfigurationError> {
-                let formats = self.inner.formats();
-                self.inner.conversion.replace_bridge(bridge, &formats)?;
-                Ok(self)
-            }
-
             pub fn allow_loss(mut self, scopes: impl IntoIterator<Item = LossScope>) -> Self {
                 self.inner.conversion.allow_loss(scopes);
                 self
@@ -165,15 +227,10 @@ macro_rules! adapter {
                 body: Value,
                 _stream: bool,
             ) -> Result<ProviderRequest, ConfigurationError> {
-                let path = match self.inner.conversion.bridge().format().as_str() {
-                    "messages" => "/v1/messages",
-                    "responses" => "/responses",
-                    _ => "/chat/completions",
-                };
                 let body = serde_json::to_vec(&body).map_err(|error| ConfigurationError {
                     message: error.to_string(),
                 })?;
-                self.inner.request(Method::Post, path, body)
+                Ok(self.inner.request(Method::Post, self.request_url()?, body))
             }
 
             fn check_response(
@@ -204,30 +261,7 @@ macro_rules! adapter {
             }
 
             fn model_discovery(&self) -> Option<&dyn ModelDiscovery> {
-                Some(self)
-            }
-        }
-
-        impl ModelDiscovery for $name {
-            fn build_list_models(
-                &self,
-                cursor: Option<&str>,
-            ) -> Result<ProviderRequest, ConfigurationError> {
-                let path = if matches!(self.inner.provider, Provider::Anthropic) {
-                    let mut path = "/v1/models?limit=1000".to_owned();
-                    if let Some(cursor) = cursor {
-                        path.push_str("&after_id=");
-                        path.push_str(&query_value(cursor));
-                    }
-                    path
-                } else {
-                    "/models".into()
-                };
-                self.inner.request(Method::Get, &path, Vec::new())
-            }
-
-            fn decode_models(&self, body: &[u8]) -> Result<ModelPage, DecodeError> {
-                self.inner.decode_models(body)
+                self.discovery()
             }
         }
     };
@@ -252,31 +286,80 @@ adapter!(
     }
 );
 
+impl ModelDiscovery for AnthropicAdapter {
+    fn build_list_models(
+        &self,
+        cursor: Option<&str>,
+    ) -> Result<ProviderRequest, ConfigurationError> {
+        let mut path = "/v1/models?limit=1000".to_owned();
+        if let Some(cursor) = cursor {
+            path.push_str("&after_id=");
+            path.push_str(&query_value(cursor));
+        }
+        Ok(self
+            .inner
+            .request(Method::Get, join(&self.base_url, &path)?, Vec::new()))
+    }
+
+    fn decode_models(&self, body: &[u8]) -> Result<ModelPage, DecodeError> {
+        self.inner.decode_models(body)
+    }
+}
+
+impl ModelDiscovery for OpenAiAdapter {
+    fn build_list_models(
+        &self,
+        _cursor: Option<&str>,
+    ) -> Result<ProviderRequest, ConfigurationError> {
+        Ok(self
+            .inner
+            .request(Method::Get, join(&self.base_url, "/models")?, Vec::new()))
+    }
+
+    fn decode_models(&self, body: &[u8]) -> Result<ModelPage, DecodeError> {
+        self.inner.decode_models(body)
+    }
+}
+
+impl ModelDiscovery for OpenAiCompatibleAdapter {
+    fn build_list_models(
+        &self,
+        _cursor: Option<&str>,
+    ) -> Result<ProviderRequest, ConfigurationError> {
+        let url = required_url(self.models_url.as_deref().unwrap_or_default(), "models_url")?;
+        Ok(self.inner.request(Method::Get, url, Vec::new()))
+    }
+
+    fn decode_models(&self, body: &[u8]) -> Result<ModelPage, DecodeError> {
+        self.inner.decode_models(body)
+    }
+}
+
+fn join(base_url: &str, path: &str) -> Result<String, ConfigurationError> {
+    let base_url = required_url(base_url, "base_url")?;
+    Ok(format!("{}{path}", base_url.trim_end_matches('/')))
+}
+
+fn required_url(url: &str, name: &str) -> Result<String, ConfigurationError> {
+    if url.trim().is_empty() {
+        return Err(ConfigurationError {
+            message: format!("{name} is required"),
+        });
+    }
+    Ok(url.to_owned())
+}
+
 impl Builtin {
-    fn new(
-        provider: Provider,
-        base_url: String,
-        bridge: Arc<dyn Bridge>,
-        api_key: Option<String>,
-    ) -> Self {
+    fn new(provider: Provider, bridge: Arc<dyn Bridge>, api_key: Option<String>) -> Self {
         let mut inner = Self {
             conversion: Conversion::from_bridge(bridge, ConversionOptions::default()),
             provider,
-            base_url,
             headers: Headers(vec![("content-type".into(), "application/json".into())]),
         };
         if let Some(api_key) = api_key {
             inner.set_header("authorization", format!("Bearer {api_key}"));
         }
         inner
-    }
-
-    fn formats(&self) -> Vec<ApiFormat> {
-        match self.provider {
-            Provider::Anthropic => vec![ApiFormat::MESSAGES],
-            Provider::OpenAi => vec![ApiFormat::RESPONSES, ApiFormat::CHAT_COMPLETIONS],
-            Provider::Compatible => vec![ApiFormat::CHAT_COMPLETIONS],
-        }
     }
 
     fn set_header(&mut self, name: &str, value: String) {
@@ -287,23 +370,13 @@ impl Builtin {
         }
     }
 
-    fn request(
-        &self,
-        method: Method,
-        path: &str,
-        body: Vec<u8>,
-    ) -> Result<ProviderRequest, ConfigurationError> {
-        if self.base_url.trim().is_empty() {
-            return Err(ConfigurationError {
-                message: "base_url is required".into(),
-            });
-        }
-        Ok(ProviderRequest {
+    fn request(&self, method: Method, url: String, body: Vec<u8>) -> ProviderRequest {
+        ProviderRequest {
             method,
-            url: format!("{}{path}", self.base_url.trim_end_matches('/')),
+            url,
             headers: self.headers.clone(),
             body,
-        })
+        }
     }
 
     fn decode_models(&self, body: &[u8]) -> Result<ModelPage, DecodeError> {

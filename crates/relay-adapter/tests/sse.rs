@@ -75,7 +75,7 @@ fn comments_multiline_data_single_space_stripping_and_unterminated_final_event_f
 
 #[test]
 fn compatible_recorded_stream_completes_with_final_usage_and_eof_flushes_error_data() {
-    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1");
+    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions");
     let mut stream = adapter
         .open_stream(200, &Headers::default())
         .expect("stream");
@@ -133,7 +133,7 @@ fn malformed_utf8_preserves_prior_frames_and_becomes_decode_after_earlier_stream
             }]
         );
     }
-    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1");
+    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions");
     let mut stream = adapter
         .open_stream(200, &Headers::default())
         .expect("stream");

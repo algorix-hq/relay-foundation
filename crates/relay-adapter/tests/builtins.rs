@@ -39,7 +39,9 @@ fn adapters() -> [Box<dyn Adapter>; 3] {
     [
         Box::new(OpenAiAdapter::new("key")),
         Box::new(AnthropicAdapter::new("key")),
-        Box::new(OpenAiCompatibleAdapter::new("https://ollama.com/v1")),
+        Box::new(OpenAiCompatibleAdapter::new(
+            "https://ollama.com/v1/chat/completions",
+        )),
     ]
 }
 
@@ -138,7 +140,9 @@ fn recorded_errors_preserve_diagnostics_even_with_non_json_content_types() {
 fn openai_and_compatible_codes_win_over_types_and_unknown_types_use_status() {
     let adapters: [Box<dyn Adapter>; 2] = [
         Box::new(OpenAiAdapter::new("key")),
-        Box::new(OpenAiCompatibleAdapter::new("https://ollama.com/v1")),
+        Box::new(OpenAiCompatibleAdapter::new(
+            "https://ollama.com/v1/chat/completions",
+        )),
     ];
     for adapter in adapters {
         for (code, category) in [
@@ -297,8 +301,8 @@ fn input() -> Request {
 }
 
 #[test]
-fn requests_use_exact_endpoints_authentication_and_bridge_selected_paths() {
-    let cases: [(Box<dyn Adapter>, &str, Headers, &str); 5] = [
+fn requests_use_exact_endpoints_authentication_and_adapter_selected_paths() {
+    let cases: [(Box<dyn Adapter>, &str, Headers, &str); 7] = [
         (
             Box::new(AnthropicAdapter::new("anthropic-key")),
             "https://api.anthropic.com/v1/messages",
@@ -325,13 +329,22 @@ fn requests_use_exact_endpoints_authentication_and_bridge_selected_paths() {
             "max_output_tokens",
         ),
         (
+            Box::new(OpenAiAdapter::new("key").base_url("https://proxy.invalid/v1/")),
+            "https://proxy.invalid/v1/responses",
+            Headers(vec![
+                ("content-type".into(), "application/json".into()),
+                ("authorization".into(), "Bearer key".into()),
+            ]),
+            "max_output_tokens",
+        ),
+        (
             Box::new(
-                OpenAiAdapter::new("key")
-                    .base_url("https://proxy.invalid/v1/")
+                OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions")
+                    .api_key("key")
                     .with_bridge(Arc::new(ChatCompletionsBridge::new()))
                     .expect("chat bridge"),
             ),
-            "https://proxy.invalid/v1/chat/completions",
+            "https://api.openai.com/v1/chat/completions",
             Headers(vec![
                 ("content-type".into(), "application/json".into()),
                 ("authorization".into(), "Bearer key".into()),
@@ -339,13 +352,28 @@ fn requests_use_exact_endpoints_authentication_and_bridge_selected_paths() {
             "max_completion_tokens",
         ),
         (
-            Box::new(OpenAiCompatibleAdapter::new("https://ollama.com/v1/")),
+            Box::new(
+                OpenAiCompatibleAdapter::new("https://proxy.invalid/v1/responses")
+                    .with_bridge(Arc::new(ResponsesBridge::new()))
+                    .expect("responses bridge"),
+            ),
+            "https://proxy.invalid/v1/responses",
+            Headers(vec![("content-type".into(), "application/json".into())]),
+            "max_output_tokens",
+        ),
+        (
+            Box::new(OpenAiCompatibleAdapter::new(
+                "https://ollama.com/v1/chat/completions",
+            )),
             "https://ollama.com/v1/chat/completions",
             Headers(vec![("content-type".into(), "application/json".into())]),
             "max_tokens",
         ),
         (
-            Box::new(OpenAiCompatibleAdapter::new("https://ollama.com/v1").api_key("ollama-key")),
+            Box::new(
+                OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
+                    .api_key("ollama-key"),
+            ),
             "https://ollama.com/v1/chat/completions",
             Headers(vec![
                 ("content-type".into(), "application/json".into()),
@@ -383,7 +411,8 @@ fn requests_use_exact_endpoints_authentication_and_bridge_selected_paths() {
 
 #[test]
 fn compatible_server_declaration_rejects_any_choice_before_conversion() {
-    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1").without_tool_choice();
+    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
+        .without_tool_choice();
     for choice in [
         json!("required"),
         json!("auto"),
@@ -414,21 +443,11 @@ fn compatible_server_declaration_rejects_any_choice_before_conversion() {
 #[test]
 fn bridge_replacement_validates_formats_and_retains_loss_policy_and_identity_injection() {
     assert!(
-        AnthropicAdapter::new("key")
-            .with_bridge(Arc::new(ResponsesBridge::new()))
-            .is_err()
-    );
-    assert!(
-        OpenAiCompatibleAdapter::new("https://ollama.com/v1")
+        OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
             .with_bridge(Arc::new(MessagesBridge::new()))
             .is_err()
     );
-    assert!(
-        OpenAiAdapter::new("key")
-            .with_bridge(Arc::new(MessagesBridge::new()))
-            .is_err()
-    );
-    let adapter = OpenAiAdapter::new("key")
+    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
         .with_id_generator(|| "injected".into())
         .with_clock(|| 123)
         .allow_loss([LossScope::CacheControl])
@@ -481,7 +500,10 @@ fn model_discovery_preserves_ids_and_only_anthropic_paginates() {
     }
     for adapter in [
         Box::new(OpenAiAdapter::new("key")) as Box<dyn Adapter>,
-        Box::new(OpenAiCompatibleAdapter::new("https://ollama.com/v1")),
+        Box::new(
+            OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
+                .models_url("https://ollama.com/v1/models"),
+        ),
     ] {
         let req = adapter.list_models(Some("ignored")).expect("models");
         assert!(req.url.ends_with("/v1/models"));
@@ -505,6 +527,10 @@ fn model_discovery_preserves_ids_and_only_anthropic_paginates() {
             Err(RelayError::Decode(_))
         ));
     }
+    assert!(matches!(
+        OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions").list_models(None),
+        Err(RelayError::UnsupportedOperation(_))
+    ));
 }
 
 fn bridge_fixture(name: &str) -> Vec<u8> {
@@ -552,11 +578,9 @@ fn provider_stream_failures_follow_prior_events_and_never_reach_bridges() {
             code: Some("server_error"),
         },
         StreamFailureCase {
-            adapter: Box::new(
-                OpenAiAdapter::new("key")
-                    .with_bridge(Arc::new(ChatCompletionsBridge::new()))
-                    .expect("chat"),
-            ),
+            adapter: Box::new(OpenAiCompatibleAdapter::new(
+                "https://api.openai.com/v1/chat/completions",
+            )),
             prefix: bridge_fixture("chat_completions/chunk_00.json"),
             error: json!({"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too big"}}),
             event: None,
@@ -564,7 +588,9 @@ fn provider_stream_failures_follow_prior_events_and_never_reach_bridges() {
             code: Some("context_length_exceeded"),
         },
         StreamFailureCase {
-            adapter: Box::new(OpenAiCompatibleAdapter::new("https://ollama.com/v1")),
+            adapter: Box::new(OpenAiCompatibleAdapter::new(
+                "https://ollama.com/v1/chat/completions",
+            )),
             prefix: Vec::new(),
             error: json!({"error":{"type":"api_error","code":null,"message":"Unauthorized"}}),
             event: None,
@@ -659,4 +685,27 @@ fn http_success_error_envelopes_are_provider_errors_but_malformed_successes_are_
             Err(RelayError::Decode(_))
         ));
     }
+}
+
+#[test]
+fn fixed_adapters_expose_bridge_settings_without_bridge_replacement() {
+    let mut request = input();
+    request.parameters = None;
+    let (built, _) = AnthropicAdapter::new("key")
+        .default_max_tokens(64)
+        .build_request(&request)
+        .expect("fallback limit");
+    let body: Value = serde_json::from_slice(&built.body).expect("JSON");
+    assert_eq!(body["max_tokens"], 64);
+    assert!(matches!(
+        AnthropicAdapter::new("key").build_request(&request),
+        Err(RelayError::Conversion(_))
+    ));
+
+    let (built, _) = OpenAiAdapter::new("key")
+        .store(false)
+        .build_request(&input())
+        .expect("stateless request");
+    let body: Value = serde_json::from_slice(&built.body).expect("JSON");
+    assert_eq!(body["store"], false);
 }

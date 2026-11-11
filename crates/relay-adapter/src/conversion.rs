@@ -59,6 +59,10 @@ impl Conversion {
         Ok(())
     }
 
+    pub(crate) fn set_bridge(&mut self, bridge: Arc<dyn Bridge>) {
+        self.bridge = bridge;
+    }
+
     pub(crate) fn allow_loss(&mut self, scopes: impl IntoIterator<Item = relay_bridge::LossScope>) {
         self.options.allow_loss.extend(scopes);
     }

@@ -127,7 +127,7 @@ fn anthropic_messages_exchange() {
 fn ollama_cloud_chat_completions_exchange() {
     check(
         "ollama",
-        &OpenAiCompatibleAdapter::new("https://ollama.com/v1")
+        &OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
             .api_key("sk-test")
             .without_tool_choice(),
         "gemma4:31b",

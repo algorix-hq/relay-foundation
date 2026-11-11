@@ -194,11 +194,12 @@ use relay_adapter::{AdapterExt, AnthropicAdapter, OpenAiAdapter, OpenAiCompatibl
 use relay_bridge::{ChatCompletionsBridge, LossScope};
 
 let openai = OpenAiAdapter::new("KEY");
-let openai_chat = OpenAiAdapter::new("KEY")
+let openai_chat = OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions")
+    .api_key("KEY")
     .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
 let anthropic = AnthropicAdapter::new("KEY")
     .allow_loss([LossScope::Sampling, LossScope::ImageDetail]);
-let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1").api_key("KEY");
+let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions").api_key("KEY");
 
 let (provider_request, losses) = anthropic.build_request(&request)?;
 ```
@@ -701,12 +702,12 @@ impl StreamEncoder for GatewayJsonEncoder {
 ```rust
 use std::sync::Arc;
 use relay_adapter::{AnthropicAdapter, OpenAiAdapter, OpenAiCompatibleAdapter};
-use relay_bridge::{ChatCompletionsBridge, LossScope, MessagesBridge};
+use relay_bridge::{ChatCompletionsBridge, LossScope, ResponsesBridge};
 
 let anthropic = AnthropicAdapter::new("anthropic-key")
     .base_url("https://api.anthropic.com")
     .version("2026-10-21")
-    .with_bridge(Arc::new(MessagesBridge::with_default_max_tokens(4096)))?
+    .default_max_tokens(4096)
     .allow_loss([LossScope::Sampling, LossScope::DeveloperRole])
     .with_id_generator(|| "relay-response".into())
     .with_clock(|| 1235);
@@ -714,14 +715,18 @@ let anthropic = AnthropicAdapter::new("anthropic-key")
 let responses = OpenAiAdapter::new("openai-key")
     .base_url("https://api.openai.com/v1")
     .organization("org-example")
-    .project("proj-example");
-let chat = OpenAiAdapter::new("openai-key")
+    .project("proj-example")
+    .store(false);
+let chat = OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions")
+    .api_key("openai-key")
     .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
 
-let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1")
+let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
     .api_key("ollama-key")
+    .models_url("https://ollama.com/v1/models")
     .without_tool_choice();
-let local = OpenAiCompatibleAdapter::new("http://localhost:11434/v1");
+let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/responses")
+    .with_bridge(Arc::new(ResponsesBridge::new()))?;
 ```
 
 ## 소비자 HTTP 전송

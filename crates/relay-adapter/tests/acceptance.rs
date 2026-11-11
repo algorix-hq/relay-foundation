@@ -5,7 +5,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use relay_adapter::{Adapter, AdapterExt, AnthropicAdapter, Headers, Method};
+use relay_adapter::{
+    Adapter, AdapterExt, AnthropicAdapter, Headers, Method, OpenAiCompatibleAdapter,
+};
 use relay_bridge::{
     ApiFormat, Bridge, BridgeError, ChatCompletionsBridge, ConversionOptions, DecodeContext,
     Encoded, MessagesBridge, ResponsesBridge, StreamDecoder, StreamEncoder,
@@ -22,7 +24,7 @@ struct PassthroughBridge {
 
 impl Bridge for PassthroughBridge {
     fn format(&self) -> &ApiFormat {
-        &ApiFormat::MESSAGES
+        &ApiFormat::CHAT_COMPLETIONS
     }
 
     fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
@@ -117,18 +119,18 @@ fn builtin_adapter_uses_custom_bridge_bodies_but_keeps_provider_error_ownership(
     let bridge = Arc::new(PassthroughBridge {
         decoded_responses: AtomicUsize::new(0),
     });
-    let adapter = AnthropicAdapter::new("fixture-key")
+    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
+        .api_key("fixture-key")
         .with_bridge(bridge.clone())
         .expect("compatible custom bridge");
     let input = request();
     let (built, losses) = adapter.build_request(&input).expect("custom request");
     assert_eq!(built.method, Method::Post);
-    assert_eq!(built.url, "https://api.anthropic.com/v1/messages");
+    assert_eq!(built.url, "https://ollama.com/v1/chat/completions");
     assert_eq!(
         built.headers.get("authorization"),
         Some("Bearer fixture-key")
     );
-    assert_eq!(built.headers.get("anthropic-version"), Some("2026-10-21"));
     assert_eq!(built.headers.get("content-type"), Some("application/json"));
     assert_eq!(
         serde_json::from_slice::<Value>(&built.body).expect("custom body"),
@@ -150,8 +152,8 @@ fn builtin_adapter_uses_custom_bridge_bodies_but_keeps_provider_error_ownership(
     );
 
     let (status, headers) =
-        recorded_headers(include_str!("fixtures/live/anthropic_invalid_key.headers"));
-    let body = include_bytes!("fixtures/live/anthropic_invalid_key.json");
+        recorded_headers(include_str!("fixtures/live/ollama_invalid_key.headers"));
+    let body = include_bytes!("fixtures/live/ollama_invalid_key.json");
     let classified = adapter
         .check_response(status, &headers, body)
         .expect_err("adapter classifies authentication failure");
