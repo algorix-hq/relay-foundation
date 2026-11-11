@@ -1,0 +1,13 @@
+{
+  "id":"msg_full", "type":"message", "role":"assistant", "model":"consumer-model",
+  "container":null, "diagnostics":null, "stop_details":null,
+  "content":[
+    {"type":"text","text":"Answer","citations":[{"type":"char_location","cited_text":"source","document_index":0,"document_title":"Notes","start_char_index":0,"end_char_index":6,"file_id":null}]},
+    {"type":"tool_use","id":"tool_1","name":"lookup","input":{"q":1},"caller":{"type":"direct"}},
+    {"type":"thinking","thinking":"Thought","signature":"SIG"},
+    {"type":"redacted_thinking","data":"ENC"},
+    {"type":"server_tool_use","id":"server_1","name":"web_search","input":{"query":"q"},"caller":{"type":"direct"}}
+  ],
+  "stop_reason":"tool_use", "stop_sequence":null,
+  "usage":{"input_tokens":10,"output_tokens":12,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"cache_creation":null,"inference_geo":"us","output_tokens_details":{"thinking_tokens":4},"server_tool_use":null,"service_tier":"standard","speed":"standard"}
+}

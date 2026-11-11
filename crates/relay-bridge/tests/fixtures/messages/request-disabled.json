@@ -1,0 +1,1 @@
+{"model":"consumer-model","max_tokens":32,"messages":[{"role":"user","content":[{"type":"text","text":"Hi"}]}],"thinking":{"type":"disabled"}}
