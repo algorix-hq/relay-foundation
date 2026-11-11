@@ -1,3 +1,215 @@
+# 0. 한 요청의 변환 과정
+
+같은 `Request`를 세 bridge와 내장 adapter에 차례로 통과시킨 실제 출력이다. 아래 JSON은 키 순서만 정리했다.
+
+## Request
+
+```rust
+use relay_protocol::{
+    AssistantContent, Delivery, ImageDetail, ImagePart, MediaSource, Message, Parameters,
+    Reasoning, ReasoningEffort, Request, TextPart, Tool, ToolChoice, ToolConfig,
+    ToolResultContent, UserContent, Version,
+};
+use serde_json::json;
+
+let request = Request {
+    version: Version::V1,
+    delivery: Some(Delivery { stream: true, stream_usage: true }),
+    model: "target-model".into(),
+    messages: vec![
+        Message::User { content: vec![
+            UserContent::Text(TextPart { text: "사진과 조회 결과를 설명해 줘".into(), cache_control: None }),
+            UserContent::Image(ImagePart {
+                source: MediaSource::Url { url: "https://example.com/photo.png".into() },
+                detail: Some(ImageDetail("high".into())), cache_control: None,
+            }),
+        ]},
+        Message::Assistant { content: vec![AssistantContent::ToolCall {
+            id: "resp_previous:0".into(), provider_id: None,
+            call_id: "call_1".into(), name: "lookup".into(),
+            arguments: r#"{ "key": "photo" }"#.into(), cache_control: None,
+        }]},
+        Message::User { content: vec![UserContent::ToolResult {
+            tool_call_id: "call_1".into(),
+            content: vec![ToolResultContent::Text(TextPart { text: "서울".into(), cache_control: None })],
+            is_error: None, cache_control: None,
+        }]},
+    ],
+    tools: Some(ToolConfig {
+        definitions: vec![Tool::Function {
+            name: "lookup".into(), description: Some("키로 조회".into()),
+            parameters: json!({
+                "type": "object", "properties": {"key": {"type": "string"}},
+                "required": ["key"], "additionalProperties": false
+            }),
+            strict: Some(true), cache_control: None,
+        }],
+        choice: Some(ToolChoice::Auto), parallel: Some(false),
+    }),
+    parameters: Some(Parameters {
+        max_output_tokens: Some(4096), temperature: Some(0.7), top_p: None, stop: vec![],
+    }),
+    response_format: None,
+    reasoning: Some(Reasoning {
+        effort: Some(ReasoningEffort("high".into())),
+        budget_tokens: None, summary: None, thinking: None,
+    }),
+};
+```
+```json
+{
+  "version": "1",
+  "model": "target-model",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "image", "source": {"type": "url", "url": "https://example.com/photo.png"}, "detail": "high"}]},
+    {"role": "assistant", "content": [{"type": "tool_call", "id": "resp_previous:0", "call_id": "call_1", "name": "lookup", "arguments": "{ \"key\": \"photo\" }"}]},
+    {"role": "user", "content": [{"type": "tool_result", "tool_call_id": "call_1", "content": [{"type": "text", "text": "서울"}]}]}
+  ],
+  "tools": {
+    "definitions": [
+      {"type": "function", "name": "lookup", "description": "키로 조회", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
+    ],
+    "choice": "auto",
+    "parallel": false
+  },
+  "parameters": {"max_output_tokens": 4096, "temperature": 0.7},
+  "reasoning": {"effort": "high"},
+  "delivery": {"stream": true, "stream_usage": true}
+}
+```
+
+## Bridge `encode_request`
+
+```rust
+use relay_bridge::{
+    Bridge, ChatCompletionsBridge, ConversionOptions, LossScope, MessagesBridge, ResponsesBridge,
+};
+
+let strict = ConversionOptions::default();
+let chat = ChatCompletionsBridge::new().encode_request(&request, &strict)?;
+let responses = ResponsesBridge::new().encode_request(&request, &strict)?;
+
+let lossy = ConversionOptions {
+    allow_loss: [LossScope::Sampling, LossScope::ImageDetail].into(),
+};
+let messages = MessagesBridge::new().encode_request(&request, &lossy)?;
+```
+
+| Protocol | Chat Completions | Responses | Messages |
+|---|---|---|---|
+| `messages` | `messages` | `input` | `messages` |
+| `parameters.max_output_tokens` | `max_completion_tokens` | `max_output_tokens` | `max_tokens` |
+| `parameters.temperature` | `temperature` | `temperature` | 생략, `losses`에 보고 |
+| `reasoning.effort` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` |
+| `delivery` | `stream`, `stream_options.include_usage` | `stream` | `stream` |
+| image `detail` | `image_url.detail` | `detail` | 생략, `losses`에 보고 |
+| `tool_call` | assistant의 `tool_calls[]` | `function_call` 항목 | `tool_use` 블록 |
+| `tool_call.arguments` | 문자열 그대로 | 문자열 그대로 | 파싱한 `input` 객체 |
+| `tool_result` | `role: "tool"` 메시지 | `function_call_output` 항목 | user의 `tool_result` 블록 |
+| `tools.parallel: false` | `parallel_tool_calls: false` | `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` |
+
+Chat Completions:
+
+```json
+{
+  "model": "target-model",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "image_url", "image_url": {"url": "https://example.com/photo.png", "detail": "high"}}]},
+    {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{ \"key\": \"photo\" }"}}]},
+    {"role": "tool", "tool_call_id": "call_1", "content": "서울"}
+  ],
+  "tools": [
+    {"type": "function", "function": {"name": "lookup", "description": "키로 조회", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}}
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "max_completion_tokens": 4096,
+  "temperature": 0.7,
+  "reasoning_effort": "high",
+  "stream": true,
+  "stream_options": {"include_usage": true}
+}
+```
+
+Responses:
+
+```json
+{
+  "model": "target-model",
+  "input": [
+    {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "input_image", "image_url": "https://example.com/photo.png", "detail": "high"}]},
+    {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{ \"key\": \"photo\" }"},
+    {"type": "function_call_output", "call_id": "call_1", "output": [{"type": "input_text", "text": "서울"}]}
+  ],
+  "tools": [
+    {"type": "function", "name": "lookup", "description": "키로 조회", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "max_output_tokens": 4096,
+  "temperature": 0.7,
+  "reasoning": {"effort": "high"},
+  "stream": true
+}
+```
+
+Messages:
+
+```json
+{
+  "model": "target-model",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "image", "source": {"type": "url", "url": "https://example.com/photo.png"}}]},
+    {"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "lookup", "input": {"key": "photo"}}]},
+    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": [{"type": "text", "text": "서울"}]}]}
+  ],
+  "tools": [
+    {"name": "lookup", "description": "키로 조회", "input_schema": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
+  ],
+  "tool_choice": {"type": "auto", "disable_parallel_tool_use": true},
+  "max_tokens": 4096,
+  "output_config": {"effort": "high"},
+  "stream": true
+}
+```
+```text
+/parameters/temperature: Messages cannot express this sampling parameter
+/messages/0/content/1/detail: Messages cannot express image detail
+```
+
+손실을 허용하지 않으면 첫 표현 불가 항목에서 `BridgeError::Conversion`을 반환한다. 위 요청에 다음 값을 하나씩 추가했을 때의 결과다.
+
+| 추가한 값 | Chat Completions | Responses | Messages |
+|---|---|---|---|
+| `reasoning.budget_tokens` | `/reasoning/budget_tokens` | `/reasoning/budget_tokens` | `/reasoning/budget_tokens` (`Invalid`), `thinking: Enabled`와 함께면 통과 |
+| `tool_result.is_error: Some(false)` | 통과 | `/messages/2/content/0/is_error` | 통과 |
+| `response_format: JsonObject` | 통과 | 통과 | `/response_format` |
+| `reasoning.summary` | `/reasoning/summary` | 통과 | `/reasoning/summary` |
+
+## Adapter `build_request`
+
+```rust
+use std::sync::Arc;
+use relay_adapter::{AdapterExt, AnthropicAdapter, OpenAiAdapter, OpenAiCompatibleAdapter};
+use relay_bridge::{ChatCompletionsBridge, LossScope};
+
+let openai = OpenAiAdapter::new("KEY");
+let openai_chat = OpenAiAdapter::new("KEY")
+    .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
+let anthropic = AnthropicAdapter::new("KEY")
+    .allow_loss([LossScope::Sampling, LossScope::ImageDetail]);
+let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1").api_key("KEY");
+
+let (provider_request, losses) = anthropic.build_request(&request)?;
+```
+
+| Adapter | Bridge | `method` `url` | `headers` | `body` |
+|---|---|---|---|---|
+| `openai` | Responses | `POST https://api.openai.com/v1/responses` | `content-type: application/json`, `authorization: Bearer KEY` | Responses 본문과 같음 |
+| `openai_chat` | Chat Completions | `POST https://api.openai.com/v1/chat/completions` | `content-type`, `authorization` | Chat Completions 본문과 같음 |
+| `anthropic` | Messages | `POST https://api.anthropic.com/v1/messages` | `content-type`, `authorization: Bearer KEY`, `anthropic-version: 2026-10-21` | Messages 본문과 같음, `losses` 2개 |
+| `ollama` | Chat Completions | `POST https://ollama.com/v1/chat/completions` | `content-type`, `authorization` | `max_completion_tokens` 대신 `max_tokens: 4096` |
+
 # 1. Protocol (`relay-protocol`)
 
 ## Request 만들기
