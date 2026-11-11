@@ -1,0 +1,1 @@
+{"input":[{"content":[{"text":"Say hi in two words.","type":"input_text"}],"role":"user","type":"message"}],"max_output_tokens":16,"model":"gpt-6-luna","stream":false}

@@ -1,0 +1,1 @@
+{"max_tokens":16,"messages":[{"content":"Say hi in two words.","role":"user"}],"model":"gemma4:31b","stream":true,"stream_options":{"include_usage":true}}
