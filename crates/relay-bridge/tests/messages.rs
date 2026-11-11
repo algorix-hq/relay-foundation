@@ -6,7 +6,7 @@ use relay_bridge::{
 };
 use relay_protocol::{
     AssistantContent, ConversionErrorKind, Message, Request, StopReason, StreamDelta, StreamEvent,
-    StreamItem,
+    StreamItem, Usage,
 };
 use serde_json::{Value, json};
 
@@ -73,6 +73,9 @@ fn ingress_preserves_system_positions_tools_reasoning_and_native_fields() {
         "request-tools-auto.json",
         "request-tools-none.json",
         "request-tools-function.json",
+        "request-thinking-zero-budget.json",
+        "request-thinking-equal-limit.json",
+        "request-thinking-above-limit.json",
     ] {
         let body = fixture(name);
         let mut input = bridge
@@ -86,6 +89,9 @@ fn ingress_preserves_system_positions_tools_reasoning_and_native_fields() {
         assert!(!native.contains_key("thinking"));
         if name == "request-full.json" {
             assert!(input.stream);
+            assert!(
+                matches!(input.request.response_format.as_ref(), Some(relay_protocol::ResponseFormat::JsonSchema { name, description: None, strict: None, .. }) if name.is_empty())
+            );
             assert_eq!(native["metadata"], body["metadata"]);
             assert_eq!(native["service_tier"], body["service_tier"]);
             assert!(input.native_for(&ApiFormat::RESPONSES).is_none());
@@ -224,6 +230,11 @@ fn strict_ingress_rejects_unrepresented_fields_and_invalid_system_positions() {
             Invalid,
             "/thinking/budget_tokens",
         ),
+        (
+            json!({"thinking":{"type":"enabled"}}),
+            Invalid,
+            "/thinking/budget_tokens",
+        ),
     ];
     for (overrides, kind, path) in cases {
         let mut body = fixture("request-minimal.json");
@@ -308,11 +319,6 @@ fn strict_encoding_names_each_unrepresentable_input_and_structural_error() {
         ),
         (
             json!({"reasoning":{"thinking":"adaptive","budget_tokens":1024}}),
-            Invalid,
-            "/reasoning/budget_tokens",
-        ),
-        (
-            json!({"parameters":{"max_output_tokens":1024},"reasoning":{"thinking":"enabled","budget_tokens":1024}}),
             Invalid,
             "/reasoning/budget_tokens",
         ),
@@ -561,6 +567,15 @@ fn response_failures_distinguish_bad_bodies_missing_ids_and_impossible_usage() {
             .body,
         fixture("response-end-turn.json")
     );
+    let mut without_usage = output.clone();
+    without_usage.response.usage = None;
+    assert_conversion(
+        bridge
+            .encode_response(&without_usage, &ConversionOptions::default())
+            .expect_err("usage required"),
+        ConversionErrorKind::Unrepresentable,
+        "/usage",
+    );
     let usage = output.response.usage.as_mut().expect("usage");
     usage.cache_read_tokens = Some(1);
     assert_conversion(
@@ -623,6 +638,12 @@ fn stream_preserves_text_tool_fragments_signatures_and_cumulative_usage() {
         encoder
             .push(event, &mut frames, &mut losses)
             .expect("gateway event");
+        if !matches!(event, StreamEvent::Stop { .. }) {
+            assert!(
+                frames.is_empty(),
+                "message_start must wait for actual usage"
+            );
+        }
     }
     encoder
         .finish(&mut frames, &mut losses)
@@ -643,6 +664,12 @@ fn stream_preserves_text_tool_fragments_signatures_and_cumulative_usage() {
         encoder
             .push(event, &mut interleaved_frames, &mut losses)
             .expect("interleaved reasoning");
+        if !matches!(event, StreamEvent::Stop { .. }) {
+            assert!(
+                interleaved_frames.is_empty(),
+                "interleaved frames must wait for actual usage"
+            );
+        }
     }
     encoder
         .finish(&mut interleaved_frames, &mut losses)
@@ -799,6 +826,7 @@ fn stream_encoder_reports_losses_when_the_omission_becomes_known() {
         .expect("unsigned reasoning omitted");
     assert_eq!(losses.len(), 2);
     assert_eq!(losses[1].path, "/items/1");
+    assert!(frames.is_empty());
     for event in [
         StreamEvent::ItemStart {
             index: 2,
@@ -816,16 +844,83 @@ fn stream_encoder_reports_losses_when_the_omission_becomes_known() {
             .push(&event, &mut frames, &mut losses)
             .expect("output after a dropped item");
     }
+    assert!(frames.is_empty());
+    encoder
+        .push(
+            &StreamEvent::Stop {
+                stop_reason: StopReason::ToolUse,
+                usage: Some(Usage {
+                    input_tokens: 35,
+                    output_tokens: 12,
+                    cache_read_tokens: Some(20),
+                    cache_write_tokens: Some(5),
+                    reasoning_tokens: Some(4),
+                }),
+            },
+            &mut frames,
+            &mut losses,
+        )
+        .expect("provider-supplied usage");
+    encoder
+        .finish(&mut frames, &mut losses)
+        .expect("complete stream");
     assert_eq!(
         frames,
         [
             "stream-encoded-start.json",
             "stream/01-text-start.json",
             "stream/02-text-delta.json",
-            "stream/03-text-stop.json"
+            "stream/03-text-stop.json",
+            "stream-encoded-delta.json",
+            "stream/15-stop.json"
         ]
         .iter()
         .map(|name| wire_frame(&fixture(name)))
         .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn stream_encoder_never_releases_frames_without_usage() {
+    let mut encoder = MessagesBridge::new().stream_encoder(&ConversionOptions::default());
+    let mut frames = Vec::new();
+    let mut losses = Vec::new();
+    for event in [
+        StreamEvent::ResponseStart {
+            id: Some("msg_stream".into()),
+            model: Some("consumer-model".into()),
+        },
+        StreamEvent::ItemStart {
+            index: 0,
+            item: StreamItem::Text,
+        },
+        StreamEvent::Delta {
+            index: 0,
+            delta: StreamDelta::Text {
+                text: "Hello".into(),
+            },
+        },
+        StreamEvent::ItemEnd { index: 0 },
+    ] {
+        encoder
+            .push(&event, &mut frames, &mut losses)
+            .expect("waiting for usage");
+        assert!(frames.is_empty());
+    }
+    assert_conversion(
+        encoder
+            .push(
+                &StreamEvent::Stop {
+                    stop_reason: StopReason::EndTurn,
+                    usage: None,
+                },
+                &mut frames,
+                &mut losses,
+            )
+            .expect_err("missing usage"),
+        ConversionErrorKind::Unrepresentable,
+        "/usage",
+    );
+    assert!(frames.is_empty());
+    assert!(losses.is_empty());
 }

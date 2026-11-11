@@ -18,14 +18,20 @@
 //! Usage detail fields with no neutral counterpart (`cache_creation`,
 //! `inference_geo`, `server_tool_use`, `service_tier`, `speed`) are ignored.
 //! `output_tokens_details.thinking_tokens` maps to reasoning tokens.
-//! Missing neutral usage is encoded as zero totals and null optional counters.
-//! Stream encoding buffers reasoning until its end to choose thinking versus
-//! redacted thinking; later frames wait behind it to preserve item order.
+//! Encoding requires provider-supplied usage. The neutral stream exposes usage
+//! only on `Stop`, so the encoder must buffer every frame until that event.
+//! Both `message_start` and `message_delta` use those actual cumulative totals,
+//! not invented initial counters. A stop without usage is unrepresentable.
+//! Reasoning is assembled until its end to distinguish thinking from redacted
+//! thinking, retain the final complete opaque value, and omit unsigned items
+//! atomically when allowed. This adds no wait beyond the required usage gate:
+//! all items must have ended before `Stop` can release any frames.
 //!
 //! Plain text documents use base64 `text/plain` in the neutral media source;
 //! Messages' text source is restored on encoding. JSON schemas use an empty name
-//! on ingress because Messages has no schema-name field; nonempty names,
-//! descriptions, and explicit strictness cannot be encoded without data loss.
+//! on ingress because Messages has no schema-name field. An empty name means
+//! "no name given"; nonempty names, descriptions, and explicit strictness cannot
+//! be encoded without data loss.
 //! Content filtering is not equated to refusal and is rejected on encoding.
 
 mod content;

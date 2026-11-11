@@ -105,7 +105,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
             .get("budget_tokens")
             .map(|v| unsigned(v, "/thinking/budget_tokens"))
             .transpose()?;
-        validate_thinking(&reasoning, max_output_tokens, "/thinking/budget_tokens")?;
+        validate_thinking(&reasoning, "/thinking/budget_tokens")?;
         has_reasoning = true;
     }
     let mut response_format = None;
@@ -259,19 +259,12 @@ fn validate_effort(effort: &str, path: &str) -> Result<(), BridgeError> {
     Ok(())
 }
 
-fn validate_thinking(
-    reasoning: &Reasoning,
-    max_tokens: u64,
-    path: &str,
-) -> Result<(), BridgeError> {
+fn validate_thinking(reasoning: &Reasoning, path: &str) -> Result<(), BridgeError> {
     match (reasoning.thinking, reasoning.budget_tokens) {
-        (Some(ThinkingMode::Enabled), Some(budget)) if budget >= 1024 && budget < max_tokens => {
-            Ok(())
+        (Some(ThinkingMode::Enabled), Some(_)) => Ok(()),
+        (Some(ThinkingMode::Enabled), None) => {
+            Err(invalid(path, "enabled thinking requires a budget"))
         }
-        (Some(ThinkingMode::Enabled), _) => Err(invalid(
-            path,
-            "enabled thinking requires a budget >= 1024 and below max_tokens",
-        )),
         (_, Some(_)) => Err(invalid(path, "a thinking budget requires enabled thinking")),
         _ => Ok(()),
     }
@@ -457,7 +450,7 @@ pub(super) fn encode(
                 "Messages cannot express reasoning summary settings",
             ));
         }
-        validate_thinking(reasoning, max_tokens, "/reasoning/budget_tokens")?;
+        validate_thinking(reasoning, "/reasoning/budget_tokens")?;
         if let Some(mode) = reasoning.thinking {
             body["thinking"] = match mode {
                 ThinkingMode::Enabled => {

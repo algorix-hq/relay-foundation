@@ -291,8 +291,19 @@ pub(super) struct Encoder {
 }
 
 enum PendingFrame {
-    Data { index: Option<u32>, value: Value },
-    Reasoning { index: u32, content: Option<Value> },
+    MessageStart {
+        id: String,
+        model: String,
+        usage: Option<Value>,
+    },
+    Data {
+        index: Option<u32>,
+        value: Value,
+    },
+    Reasoning {
+        index: u32,
+        content: Option<Value>,
+    },
 }
 
 enum EncodedKind {
@@ -348,7 +359,11 @@ impl Encoder {
             let model = model
                 .as_ref()
                 .ok_or_else(|| unrepresentable("/model", "Messages streaming requires a model"))?;
-            self.pending.push_back(PendingFrame::Data { index: None, value: json!({"type":"message_start", "message":message(id, model, encode_usage(None)?)}) });
+            self.pending.push_back(PendingFrame::MessageStart {
+                id: id.clone(),
+                model: model.clone(),
+                usage: None,
+            });
             self.started = true;
             return Ok(());
         }
@@ -545,6 +560,13 @@ impl Encoder {
                 }
                 let reason = encode_stop(stop_reason)?;
                 let usage = encode_usage(usage.as_ref())?;
+                let Some(PendingFrame::MessageStart {
+                    usage: start_usage, ..
+                }) = self.pending.front_mut()
+                else {
+                    return Err(invalid("", "missing buffered message_start"));
+                };
+                *start_usage = Some(usage.clone());
                 let usage = json!({
                     "input_tokens":usage["input_tokens"], "output_tokens":usage["output_tokens"],
                     "cache_read_input_tokens":usage["cache_read_input_tokens"], "cache_creation_input_tokens":usage["cache_creation_input_tokens"],
@@ -574,6 +596,28 @@ impl Encoder {
     fn flush(&mut self, out: &mut Vec<Frame>) -> Result<(), BridgeError> {
         while let Some(pending) = self.pending.pop_front() {
             match pending {
+                PendingFrame::MessageStart {
+                    id,
+                    model,
+                    usage: None,
+                } => {
+                    self.pending.push_front(PendingFrame::MessageStart {
+                        id,
+                        model,
+                        usage: None,
+                    });
+                    break;
+                }
+                PendingFrame::MessageStart {
+                    id,
+                    model,
+                    usage: Some(usage),
+                } => {
+                    frame(
+                        out,
+                        json!({"type":"message_start", "message":message(&id, &model, usage)}),
+                    );
+                }
                 PendingFrame::Reasoning {
                     index,
                     content: None,

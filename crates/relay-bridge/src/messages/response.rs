@@ -120,11 +120,13 @@ pub(super) fn decode_usage(value: &Value, path: &str) -> Result<Usage, BridgeErr
 }
 
 pub(super) fn encode_usage(usage: Option<&Usage>) -> Result<Value, BridgeError> {
-    let input = usage.map_or(0, |u| u.input_tokens);
-    let output = usage.map_or(0, |u| u.output_tokens);
-    let read = usage.and_then(|u| u.cache_read_tokens);
-    let write = usage.and_then(|u| u.cache_write_tokens);
-    let reasoning = usage.and_then(|u| u.reasoning_tokens);
+    let usage = usage
+        .ok_or_else(|| unrepresentable("/usage", "Messages requires provider-supplied usage"))?;
+    let input = usage.input_tokens;
+    let output = usage.output_tokens;
+    let read = usage.cache_read_tokens;
+    let write = usage.cache_write_tokens;
+    let reasoning = usage.reasoning_tokens;
     let ordinary = input
         .checked_sub(read.unwrap_or(0))
         .and_then(|v| v.checked_sub(write.unwrap_or(0)))
