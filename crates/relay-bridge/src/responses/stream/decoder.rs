@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 
-use relay_protocol::{StreamDelta, StreamEvent, StreamItem};
+use relay_protocol::{MetadataScope, StreamDelta, StreamEvent, StreamItem, Timestamp};
 use serde_json::Value;
 
 use crate::responses::{response, wire::*};
-use crate::{BridgeError, Frame, StreamDecoder};
+use crate::{BridgeError, DecodeContext, Frame, StreamDecoder};
 
-#[derive(Default)]
 pub(in crate::responses) struct Decoder {
+    context: DecodeContext,
+    response_id: Option<String>,
+    model: Option<String>,
     items: BTreeMap<u32, DecodingItem>,
     next_index: u32,
     started: bool,
@@ -38,11 +40,20 @@ impl StreamDecoder for Decoder {
         if matches!(kind.as_str(), "error" | "response.failed") {
             return Err(decode_error(
                 "/type",
-                "adapter should have removed the provider failure event before bridge decoding",
+                "provider failure event should have been removed by the adapter",
             ));
         }
         if self.stopped {
             return Err(decode_error("/type", "event after terminal response event"));
+        }
+        if let Some(response) = value.get("response") {
+            let _: Option<u64> = field!(response, "created_at", "/response")?;
+        }
+        if !self.started && kind != "response.created" {
+            return Err(decode_error(
+                "/type",
+                "response.created required before stream events",
+            ));
         }
         match kind.as_str() {
             "response.created" => {
@@ -51,10 +62,20 @@ impl StreamDecoder for Decoder {
                 }
                 let response: Value = field!(&value, "response", "")?;
                 response::reject_failure(&response)?;
-                let id = Some(field!(&response, "id", "/response")?);
+                let (response_id, provider_id) = response::identity(&response, &self.context)?;
                 let model = Some(field!(&response, "model", "/response")?);
+                self.model = model.clone();
                 self.started = true;
-                out.push(StreamEvent::ResponseStart { id, model });
+                self.response_id = Some(response_id.clone());
+                out.push(StreamEvent::Start {
+                    response_id,
+                    provider_id,
+                    model,
+                    created_at: Timestamp {
+                        observed_at: self.context.observed_at,
+                        provider_created_at: field!(&response, "created_at", "/response")?,
+                    },
+                });
             }
             "response.output_item.added" => {
                 let output_index = field!(&value, "output_index", "")?;
@@ -66,24 +87,19 @@ impl StreamDecoder for Decoder {
                 let kind = match kind.as_str() {
                     "message" => StreamItem::Text,
                     "function_call" => StreamItem::ToolCall {
-                        id: Some(field!(&item, "call_id", "/item")?),
-                        name: Some(field!(&item, "name", "/item")?),
+                        call_id: field!(&item, "call_id", "/item")?,
+                        name: field!(&item, "name", "/item")?,
                     },
-                    "reasoning" => StreamItem::Reasoning {
-                        id: Some(field!(&item, "id", "/item")?),
-                    },
+                    "reasoning" => StreamItem::Reasoning,
                     _ => StreamItem::Unknown,
                 };
-                let source_id = match &kind {
-                    StreamItem::Text | StreamItem::Reasoning { .. } => {
-                        Some(field!(&item, "id", "/item")?)
-                    }
-                    StreamItem::ToolCall { .. } => field!(&item, "id", "/item")?,
-                    StreamItem::Unknown => None,
-                };
+                let source_id: Option<String> = field!(&item, "id", "/item")?;
                 let index = self.allocate()?;
+                let id = self.item_id(source_id.as_ref(), index)?;
                 out.push(StreamEvent::ItemStart {
                     index,
+                    id,
+                    provider_id: source_id.clone(),
                     item: kind.clone(),
                 });
                 self.items.insert(
@@ -112,23 +128,34 @@ impl StreamDecoder for Decoder {
                 let index = active.index;
                 let started_kind = active.kind.clone();
                 let kind: String = field!(&item, "type", "/item")?;
+                let source_id: Option<String> = field!(&item, "id", "/item")?;
+                if source_id
+                    .as_ref()
+                    .zip(active.source_id.as_ref())
+                    .is_some_and(|(done, started)| done != started)
+                {
+                    return Err(decode_error("/item/id", "output item identity changed"));
+                }
+                let late_id = source_id.filter(|_| active.source_id.is_none());
                 if !matches!(active.kind, StreamItem::Unknown) {
                     let mut content = Vec::new();
-                    response::decode_item(&item, "/item", &mut content)?;
-                    let source_id: Option<String> = field!(&item, "id", "/item")?;
-                    if source_id
-                        .as_ref()
-                        .zip(active.source_id.as_ref())
-                        .is_some_and(|(done, started)| done != started)
-                    {
-                        return Err(decode_error("/item/id", "output item identity changed"));
-                    }
+                    response::decode_item(&item, "/item", "", 0, &mut content)?;
+                }
+                if let Some(provider_id) = late_id {
+                    self.items
+                        .get_mut(&output_index)
+                        .ok_or_else(|| decode_error("/output_index", "unknown item"))?
+                        .source_id = Some(provider_id.clone());
+                    out.push(StreamEvent::Metadata(MetadataScope::Item {
+                        index,
+                        provider_id: Some(provider_id),
+                        call_id: None,
+                        name: None,
+                    }));
                 }
                 match &started_kind {
-                    StreamItem::Reasoning { id } => {
-                        if kind != "reasoning"
-                            || field!(Option<String>; &item, "id", "/item")? != *id
-                        {
+                    StreamItem::Reasoning => {
+                        if kind != "reasoning" {
                             return Err(decode_error("/item/id", "reasoning identity changed"));
                         }
                         let content: Option<Vec<Value>> = field!(&item, "content", "/item")?;
@@ -168,13 +195,11 @@ impl StreamDecoder for Decoder {
                             });
                         }
                     }
-                    StreamItem::ToolCall { id, name } => {
-                        if kind != "function_call"
-                            || field!(Option<String>; &item, "call_id", "/item")? != *id
-                            || field!(Option<String>; &item, "name", "/item")? != *name
-                        {
-                            return Err(decode_error("/item", "function call identity changed"));
+                    StreamItem::ToolCall { .. } => {
+                        if kind != "function_call" {
+                            return Err(decode_error("/item/type", "function call kind changed"));
                         }
+                        self.tool_metadata(output_index, &item, out)?;
                         let text = field!(&item, "arguments", "/item")?;
                         self.observe(output_index, DeltaKey::Arguments, text, true, out)?;
                     }
@@ -239,6 +264,22 @@ impl StreamDecoder for Decoder {
                 out.push(StreamEvent::Stop { stop_reason, usage });
                 self.stopped = true;
             }
+            "response.in_progress" => {
+                let response: Value = field!(&value, "response", "")?;
+                response::reject_failure(&response)?;
+                let model: Option<String> = field!(&response, "model", "/response")?;
+                let model = model.filter(|model| self.model.as_ref() != Some(model));
+                if let Some(model) = &model {
+                    self.model = Some(model.clone());
+                }
+                let usage = response::decode_usage(response.get("usage"))?;
+                if usage.is_some() || model.is_some() {
+                    out.push(StreamEvent::Metadata(MetadataScope::Response {
+                        usage,
+                        model,
+                    }));
+                }
+            }
             kind if informational(kind) => {}
             _ => {
                 let output_index: Option<u32> = field!(&value, "output_index", "")?;
@@ -252,6 +293,8 @@ impl StreamDecoder for Decoder {
                     let index = self.allocate()?;
                     out.push(StreamEvent::ItemStart {
                         index,
+                        id: self.item_id(None, index)?,
+                        provider_id: None,
                         item: StreamItem::Unknown,
                     });
                     out.push(StreamEvent::Delta {
@@ -283,14 +326,34 @@ impl StreamDecoder for Decoder {
 }
 
 impl Decoder {
-    fn text_event(
+    pub(in crate::responses) fn new(context: DecodeContext) -> Self {
+        Self {
+            context,
+            response_id: None,
+            model: None,
+            items: BTreeMap::new(),
+            next_index: 0,
+            started: false,
+            stopped: false,
+        }
+    }
+
+    fn item_id(&self, provider_id: Option<&String>, index: u32) -> Result<String, BridgeError> {
+        let response_id = self
+            .response_id
+            .as_ref()
+            .ok_or_else(|| decode_error("/type", "response.created required before items"))?;
+        Ok(provider_id
+            .cloned()
+            .unwrap_or_else(|| format!("{response_id}:{index}")))
+    }
+
+    fn tool_metadata(
         &mut self,
+        output_index: u32,
         value: &Value,
-        kind: &str,
         out: &mut Vec<StreamEvent>,
     ) -> Result<(), BridgeError> {
-        let output_index = field!(value, "output_index", "")?;
-        let source_id: String = field!(value, "item_id", "")?;
         let item = self
             .items
             .get_mut(&output_index)
@@ -301,13 +364,69 @@ impl Decoder {
                     "event references an unopened or ended item",
                 )
             })?;
-        if item.source_id.as_ref().is_some_and(|id| id != &source_id) {
+        let StreamItem::ToolCall { call_id, name } = &mut item.kind else {
+            return Ok(());
+        };
+        let new_call_id: Option<String> = field!(value, "call_id", "")?;
+        let new_name: Option<String> = field!(value, "name", "")?;
+        let new_call_id = new_call_id.filter(|value| call_id.as_ref() != Some(value));
+        let new_name = new_name.filter(|value| name.as_ref() != Some(value));
+        if new_call_id.is_some() || new_name.is_some() {
+            if let Some(value) = &new_call_id {
+                *call_id = Some(value.clone());
+            }
+            if let Some(value) = &new_name {
+                *name = Some(value.clone());
+            }
+            out.push(StreamEvent::Metadata(MetadataScope::Item {
+                index: item.index,
+                provider_id: None,
+                call_id: new_call_id,
+                name: new_name,
+            }));
+        }
+        Ok(())
+    }
+
+    fn text_event(
+        &mut self,
+        value: &Value,
+        kind: &str,
+        out: &mut Vec<StreamEvent>,
+    ) -> Result<(), BridgeError> {
+        let output_index = field!(value, "output_index", "")?;
+        self.tool_metadata(output_index, value, out)?;
+        let source_id: Option<String> = field!(value, "item_id", "")?;
+        let item = self
+            .items
+            .get_mut(&output_index)
+            .filter(|item| !item.ended)
+            .ok_or_else(|| {
+                decode_error(
+                    "/output_index",
+                    "event references an unopened or ended item",
+                )
+            })?;
+        if item
+            .source_id
+            .as_ref()
+            .zip(source_id.as_ref())
+            .is_some_and(|(id, source)| id != source)
+        {
             return Err(decode_error(
                 "/item_id",
                 "delta item identity disagrees with output_index",
             ));
         }
-        item.source_id = Some(source_id);
+        if item.source_id.is_none() && source_id.is_some() {
+            item.source_id = source_id.clone();
+            out.push(StreamEvent::Metadata(MetadataScope::Item {
+                index: item.index,
+                provider_id: source_id,
+                call_id: None,
+                name: None,
+            }));
+        }
         let complete = kind.ends_with(".done");
         let key = match kind {
             "response.output_text.delta" | "response.output_text.done" => {
@@ -355,7 +474,7 @@ impl Decoder {
             (StreamItem::Text, DeltaKey::Text(_))
                 | (StreamItem::ToolCall { .. }, DeltaKey::Arguments)
                 | (
-                    StreamItem::Reasoning { .. },
+                    StreamItem::Reasoning,
                     DeltaKey::ReasoningText(_) | DeltaKey::Summary(_)
                 )
         );
@@ -425,8 +544,7 @@ impl Decoder {
 fn informational(kind: &str) -> bool {
     matches!(
         kind,
-        "response.in_progress"
-            | "response.queued"
+        "response.queued"
             | "response.compaction.compacting"
             | "response.content_part.added"
             | "response.content_part.done"

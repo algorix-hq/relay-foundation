@@ -1,21 +1,17 @@
 use std::collections::BTreeMap;
 
 use relay_protocol::{
-    ConversionLoss, Response, StopReason, StreamDelta, StreamEvent, StreamItem, Version,
+    ConversionLoss, MetadataScope, Request, StreamDelta, StreamEvent, StreamItem, Timestamp,
 };
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::responses::{response, wire::*};
-use crate::{
-    ApiFormat, BridgeError, ConversionOptions, Frame, LossScope, NativeFields, Output,
-    StreamEncoder,
-};
+use crate::{BridgeError, ConversionOptions, Frame, LossScope, StreamEncoder};
 
 pub(in crate::responses) struct Encoder {
     options: ConversionOptions,
-    native: NativeFields,
-    base: Option<NativeFields>,
-    metadata: Vec<NativeFields>,
+    request: Request,
+    base: Option<Map<String, Value>>,
     items: BTreeMap<u32, EncodingItem>,
     next_output_index: u32,
     sequence_number: u64,
@@ -26,17 +22,15 @@ struct EncodingItem {
     output_index: Option<u32>,
     wire: Value,
     id: String,
-    final_status: Option<String>,
     ended: bool,
 }
 
 impl Encoder {
-    pub(in crate::responses) fn new(options: ConversionOptions, native: NativeFields) -> Self {
+    pub(in crate::responses) fn new(options: ConversionOptions, request: Request) -> Self {
         Self {
             options,
-            native,
+            request,
             base: None,
-            metadata: Vec::new(),
             items: BTreeMap::new(),
             next_output_index: 0,
             sequence_number: 0,
@@ -47,7 +41,7 @@ impl Encoder {
     fn emit(
         &mut self,
         kind: &str,
-        mut value: NativeFields,
+        mut value: Map<String, Value>,
         out: &mut Vec<Frame>,
     ) -> Result<(), BridgeError> {
         value.insert("type".into(), json!(kind));
@@ -76,46 +70,39 @@ impl Encoder {
 
     fn start(
         &mut self,
-        id: &Option<String>,
+        id: &str,
+        created_at: &Timestamp,
         model: &Option<String>,
         out: &mut Vec<Frame>,
+        losses: &mut Vec<ConversionLoss>,
     ) -> Result<(), BridgeError> {
         if self.base.is_some() {
             return Err(invalid("/type", "duplicate response start"));
         }
-        let mut native = self.native.clone();
-        self.metadata = native
-            .remove("output")
-            .map(|value| parse!(value, "/output"))
-            .transpose()?
-            .unwrap_or_default();
-        native.remove("usage");
-        let model = if let Some(model) = model {
-            if native.contains_key("model") {
-                return Err(invalid(
-                    "/model",
-                    "native field collides with stream response model",
-                ));
-            }
-            model.clone()
-        } else {
-            required_native!(&mut native, "model", "")?
-        };
-        let output = Output::with_native(
-            ApiFormat::RESPONSES,
-            Response {
-                version: Version::V1,
-                id: id.clone(),
-                model,
-                content: Vec::new(),
-                stop_reason: StopReason::EndTurn,
-                usage: None,
-            },
-            native,
-        );
-        let mut base = object(&response::encode(&output, &self.options)?.body, "")?;
-        base.insert("status".into(), json!("in_progress"));
+        let model = model
+            .as_ref()
+            .ok_or_else(|| unrepresentable("/model", "required model missing"))?;
+        let mut base = response::envelope(&self.request, &self.options, losses)?;
+        base.extend(Map::from_iter([
+            ("id".into(), json!(id)),
+            ("model".into(), json!(model)),
+            (
+                "created_at".into(),
+                json!(
+                    created_at
+                        .provider_created_at
+                        .unwrap_or(created_at.observed_at)
+                ),
+            ),
+            ("object".into(), json!("response")),
+            ("error".into(), Value::Null),
+            ("status".into(), json!("in_progress")),
+            ("incomplete_details".into(), Value::Null),
+            ("output".into(), json!([])),
+            ("output_text".into(), json!("")),
+        ]));
         self.emit_value("response.created", json!({"response":base}), out)?;
+        self.emit_value("response.in_progress", json!({"response":base}), out)?;
         self.base = Some(base);
         Ok(())
     }
@@ -123,6 +110,7 @@ impl Encoder {
     fn item_start(
         &mut self,
         index: u32,
+        id: &str,
         item: &StreamItem,
         out: &mut Vec<Frame>,
         losses: &mut Vec<ConversionLoss>,
@@ -131,81 +119,37 @@ impl Encoder {
             return Err(invalid(&format!("/items/{index}"), "duplicate item start"));
         }
         let path = format!("/items/{index}");
-        let mut metadata = usize::try_from(index)
-            .ok()
-            .and_then(|index| self.metadata.get(index))
-            .cloned()
-            .unwrap_or_default();
-        let final_status: Option<String> = optional!(&mut metadata, "status", &path)?;
-        if final_status
-            .as_deref()
-            .is_some_and(|status| !matches!(status, "completed" | "incomplete" | "in_progress"))
-        {
-            return Err(invalid(
-                &format!("{path}/status"),
-                "invalid output item status",
-            ));
+        if usize::try_from(index).ok() != Some(self.items.len()) {
+            return Err(invalid(&path, "index must follow ItemStart order"));
         }
-        let (wire, id) = match item {
+        let wire = match item {
             StreamItem::Text => {
-                let id: String = required_native!(&mut metadata, "id", &path)?;
-                if final_status.is_none() {
-                    return Err(unrepresentable(
-                        &format!("{path}/status"),
-                        "message final status must be supplied explicitly",
-                    ));
-                }
-                (
-                    json!({"type":"message", "id":id, "role":"assistant", "status":"in_progress", "content":[]}),
-                    id,
-                )
+                json!({"type":"message", "id":id, "role":"assistant", "status":"in_progress", "content":[]})
             }
-            StreamItem::ToolCall { id: call_id, name } => {
+            StreamItem::ToolCall { call_id, name } => {
                 let call_id = call_id.as_ref().ok_or_else(|| {
-                    unrepresentable(&format!("{path}/id"), "function call ID is required")
+                    unrepresentable(&format!("{path}/call_id"), "function call ID is required")
                 })?;
                 let name = name.as_ref().ok_or_else(|| {
                     unrepresentable(&format!("{path}/name"), "function name is required")
                 })?;
-                let id: String = required_native!(&mut metadata, "id", &path)?;
-                (
-                    json!({"type":"function_call", "id":id, "call_id":call_id, "name":name, "arguments":""}),
-                    id,
-                )
+                json!({"type":"function_call", "id":id, "call_id":call_id, "name":name, "arguments":""})
             }
-            StreamItem::Reasoning { id: Some(id) } => (
-                json!({"type":"reasoning", "id":id, "summary":[]}),
-                id.clone(),
-            ),
-            StreamItem::Reasoning { id: None } | StreamItem::Unknown => {
-                let scope = if matches!(item, StreamItem::Unknown) {
-                    LossScope::UnknownContent
-                } else {
-                    LossScope::Reasoning
-                };
-                drop_allowed(scope, &path, &self.options, losses)?;
+            StreamItem::Reasoning => json!({"type":"reasoning", "id":id, "summary":[]}),
+            StreamItem::Unknown => {
+                drop_allowed(LossScope::UnknownContent, &path, &self.options, losses)?;
                 self.items.insert(
                     index,
                     EncodingItem {
                         output_index: None,
                         wire: Value::Null,
                         id: String::new(),
-                        final_status: None,
                         ended: false,
                     },
                 );
                 return Ok(());
             }
         };
-        for key in metadata.keys() {
-            if wire.get(key).is_some() {
-                return Err(invalid(
-                    &format!("{path}/{}", pointer_key(key)),
-                    "native field collides with generated item field",
-                ));
-            }
-        }
-        reject_remaining(&metadata, &path)?;
         let output_index = self.next_output_index;
         self.next_output_index = output_index
             .checked_add(1)
@@ -230,8 +174,7 @@ impl Encoder {
             EncodingItem {
                 output_index: Some(output_index),
                 wire,
-                id,
-                final_status,
+                id: id.into(),
                 ended: false,
             },
         );
@@ -365,8 +308,8 @@ impl Encoder {
             return Ok(());
         };
         let id = item.id.clone();
-        if let Some(status) = &item.final_status {
-            item.wire["status"] = json!(status);
+        if item.wire["type"] == "message" {
+            item.wire["status"] = json!("completed");
         }
         let wire = item.wire.clone();
         match wire.get("type").and_then(Value::as_str) {
@@ -414,8 +357,14 @@ impl StreamEncoder for Encoder {
         if self.stopped {
             return Err(invalid("/type", "event after stop"));
         }
-        if let StreamEvent::ResponseStart { id, model } = event {
-            return self.start(id, model, out);
+        if let StreamEvent::Start {
+            response_id,
+            created_at,
+            model,
+            ..
+        } = event
+        {
+            return self.start(response_id, created_at, model, out, losses);
         }
         if self.base.is_none() {
             return Err(invalid(
@@ -424,7 +373,54 @@ impl StreamEncoder for Encoder {
             ));
         }
         match event {
-            StreamEvent::ItemStart { index, item } => self.item_start(*index, item, out, losses),
+            StreamEvent::ItemStart {
+                index, id, item, ..
+            } => self.item_start(*index, id, item, out, losses),
+            StreamEvent::Metadata(scope) => {
+                match scope {
+                    MetadataScope::Response { usage, model } => {
+                        let usage = usage.as_ref().map(response::encode_usage).transpose()?;
+                        if let Some(base) = &mut self.base {
+                            if let Some(model) = model {
+                                base.insert("model".into(), json!(model));
+                            }
+                            if let Some(usage) = usage {
+                                base.insert("usage".into(), usage);
+                            }
+                        }
+                        self.emit_value(
+                            "response.in_progress",
+                            json!({"response":self.base}),
+                            out,
+                        )?;
+                    }
+                    MetadataScope::Item {
+                        index,
+                        call_id,
+                        name,
+                        ..
+                    } => {
+                        let path = format!("/items/{index}");
+                        let item = self
+                            .items
+                            .get_mut(index)
+                            .filter(|item| !item.ended)
+                            .ok_or_else(|| invalid(&path, "metadata requires an open item"))?;
+                        if call_id.is_some() || name.is_some() {
+                            if item.wire["type"] != "function_call" {
+                                return Err(invalid(&path, "tool metadata requires function call"));
+                            }
+                            if let Some(call_id) = call_id {
+                                item.wire["call_id"] = json!(call_id);
+                            }
+                            if let Some(name) = name {
+                                item.wire["name"] = json!(name);
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
             StreamEvent::Delta { index, delta } => self.delta(*index, delta, out, losses),
             StreamEvent::ItemEnd { index } => self.item_end(*index, out),
             StreamEvent::Stop { stop_reason, usage } => {
@@ -454,10 +450,9 @@ impl StreamEncoder for Encoder {
                 body.insert("output_text".into(), json!(text));
                 body.insert("status".into(), json!(status));
                 body.insert("incomplete_details".into(), incomplete_details);
-                if let Some(usage) =
-                    response::encode_usage(usage.as_ref(), self.native.get("usage").cloned())?
-                {
-                    body.insert("usage".into(), usage);
+                body.remove("usage");
+                if let Some(usage) = usage {
+                    body.insert("usage".into(), response::encode_usage(usage)?);
                 }
                 let event = if status == "completed" {
                     "response.completed"
@@ -468,7 +463,7 @@ impl StreamEncoder for Encoder {
                 self.stopped = true;
                 Ok(())
             }
-            StreamEvent::ResponseStart { .. } => Err(invalid("/type", "duplicate response start")),
+            StreamEvent::Start { .. } => Err(invalid("/type", "duplicate response start")),
         }
     }
 

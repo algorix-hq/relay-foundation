@@ -1,26 +1,26 @@
 use relay_protocol::{
-    AssistantContent, CacheControl, ConversionLoss, DocumentPart, ImageDetail, ImagePart,
+    AssistantContent, CacheControl, ConversionLoss, Delivery, DocumentPart, ImageDetail, ImagePart,
     MediaSource, Message, Parameters, Reasoning, Request, ResponseFormat, TextPart, Tool,
     ToolChoice, ToolConfig, ToolResultContent, UserContent, Version,
 };
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::wire::*;
-use crate::{ApiFormat, BridgeError, ConversionOptions, Encoded, Input, LossScope, NativeFields};
+use crate::{BridgeError, ConversionOptions, Encoded, LossScope};
 
-pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
+pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
     let value: Value =
         serde_json::from_slice(body).map_err(|error| invalid("", error.to_string()))?;
-    let mut native = object(&value, "")?;
-    let model = take!(&mut native, "model", "")?;
-    let stream = optional!(&mut native, "stream", "")?.unwrap_or(false);
+    let mut fields = object(&value, "")?;
+    let model = take!(&mut fields, "model", "")?;
+    let stream = optional!(&mut fields, "stream", "")?.unwrap_or(false);
     let mut messages = Vec::new();
-    if let Some(text) = optional!(String; &mut native, "instructions", "")? {
+    if let Some(text) = optional!(String; &mut fields, "instructions", "")? {
         messages.push(Message::System {
             content: vec![text_part(text)],
         });
     }
-    if let Some(input) = native.remove("input") {
+    if let Some(input) = fields.remove("input") {
         if let Some(text) = input.as_str() {
             messages.push(Message::User {
                 content: vec![UserContent::Text(text_part(text.into()))],
@@ -31,7 +31,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
             }
         }
     }
-    let definitions = native
+    let definitions = fields
         .remove("tools")
         .map(|tools| {
             array(&tools, "/tools")?
@@ -41,21 +41,21 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
                 .collect::<Result<Vec<_>, BridgeError>>()
         })
         .transpose()?;
-    let choice = native
+    let choice = fields
         .remove("tool_choice")
         .map(decode_choice)
         .transpose()?;
-    let parallel = optional!(&mut native, "parallel_tool_calls", "")?;
+    let parallel = optional!(&mut fields, "parallel_tool_calls", "")?;
     let tools =
         (definitions.is_some() || choice.is_some() || parallel.is_some()).then(|| ToolConfig {
             definitions: definitions.unwrap_or_default(),
             choice,
             parallel,
         });
-    let max_output_tokens = optional!(&mut native, "max_output_tokens", "")?;
-    let temperature = optional!(&mut native, "temperature", "")?;
-    let top_p = optional!(&mut native, "top_p", "")?;
-    if native.contains_key("stop") {
+    let max_output_tokens = optional!(&mut fields, "max_output_tokens", "")?;
+    let temperature = optional!(&mut fields, "temperature", "")?;
+    let top_p = optional!(&mut fields, "top_p", "")?;
+    if fields.contains_key("stop") {
         return Err(unrepresentable(
             "/stop",
             "Responses has no stop sequence field",
@@ -68,7 +68,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
             top_p,
             stop: Vec::new(),
         });
-    let reasoning = native
+    let reasoning = fields
         .remove("reasoning")
         .filter(|value| !value.is_null())
         .map(|value| {
@@ -84,7 +84,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
             })
         })
         .transpose()?;
-    let response_format = native
+    let response_format = fields
         .remove("text")
         .map(|value| {
             let mut object = object(&value, "/text")?;
@@ -97,20 +97,20 @@ pub(super) fn decode(body: &[u8]) -> Result<Input, BridgeError> {
         })
         .transpose()?
         .flatten();
-    Ok(Input::with_native(
-        ApiFormat::RESPONSES,
-        Request {
-            version: Version::V1,
-            model,
-            messages,
-            tools,
-            parameters,
-            reasoning,
-            response_format,
-        },
-        stream,
-        native,
-    ))
+    reject_remaining(&fields, "")?;
+    Ok(Request {
+        version: Version::V1,
+        model,
+        messages,
+        tools,
+        parameters,
+        reasoning,
+        response_format,
+        delivery: Some(Delivery {
+            stream,
+            stream_usage: false,
+        }),
+    })
 }
 
 fn decode_item(value: &Value, path: &str) -> Result<Message, BridgeError> {
@@ -147,7 +147,16 @@ fn decode_item(value: &Value, path: &str) -> Result<Message, BridgeError> {
                         "system" => Message::System { content: text },
                         "developer" => Message::Developer { content: text },
                         _ => Message::Assistant {
-                            content: text.into_iter().map(AssistantContent::Text).collect(),
+                            content: text
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, part)| AssistantContent::Text {
+                                    id: format!("{path}:{index}"),
+                                    provider_id: None,
+                                    text: part.text,
+                                    cache_control: None,
+                                })
+                                .collect(),
                         },
                     }
                 }
@@ -155,10 +164,13 @@ fn decode_item(value: &Value, path: &str) -> Result<Message, BridgeError> {
             }
         }
         "function_call" => {
-            allow_keys(&item, &["call_id", "name", "arguments"], path)?;
+            allow_keys(&item, &["id", "call_id", "name", "arguments"], path)?;
+            let provider_id: Option<String> = optional!(&mut item, "id", path)?;
             Message::Assistant {
                 content: vec![AssistantContent::ToolCall {
-                    id: take!(&mut item, "call_id", path)?,
+                    id: provider_id.clone().unwrap_or_else(|| format!("{path}:0")),
+                    provider_id,
+                    call_id: take!(&mut item, "call_id", path)?,
                     name: take!(&mut item, "name", path)?,
                     arguments: take!(&mut item, "arguments", path)?,
                     cache_control: None,
@@ -204,7 +216,7 @@ fn decode_item(value: &Value, path: &str) -> Result<Message, BridgeError> {
                 &["id", "encrypted_content", "summary", "content"],
                 path,
             )?;
-            let id = Some(take!(&mut item, "id", path)?);
+            let id: String = take!(&mut item, "id", path)?;
             let opaque = optional!(&mut item, "encrypted_content", path)?;
             let summary = reasoning_parts(
                 item.remove("summary").unwrap_or(Value::Null),
@@ -223,6 +235,7 @@ fn decode_item(value: &Value, path: &str) -> Result<Message, BridgeError> {
             }
             Message::Assistant {
                 content: vec![AssistantContent::Reasoning {
+                    provider_id: Some(id.clone()),
                     id,
                     opaque,
                     summary,
@@ -390,7 +403,7 @@ fn decode_format(value: Value, path: &str) -> Result<ResponseFormat, BridgeError
         "text" => ResponseFormat::Text,
         "json_object" => ResponseFormat::JsonObject,
         "json_schema" => ResponseFormat::JsonSchema {
-            name: take!(&mut format, "name", path)?,
+            name: Some(take!(&mut format, "name", path)?),
             description: optional!(&mut format, "description", path)?,
             schema: take!(&mut format, "schema", path)?,
             strict: optional!(&mut format, "strict", path)?,
@@ -415,11 +428,10 @@ fn decode_format(value: Value, path: &str) -> Result<ResponseFormat, BridgeError
 }
 
 pub(super) fn encode(
-    input: &Input,
+    request: &Request,
     options: &ConversionOptions,
     store: Option<bool>,
 ) -> Result<Encoded, BridgeError> {
-    let request = &input.request;
     let mut losses = Vec::new();
     let mut items = Vec::new();
     for (message_index, message) in request.messages.iter().enumerate() {
@@ -456,7 +468,7 @@ pub(super) fn encode(
                         } => {
                             flush_message(&mut pending, "user", &mut items);
                             cache(cache_control, &path, options, &mut losses)?;
-                            if *is_error == Some(true) {
+                            if is_error.is_some() {
                                 return Err(unrepresentable(
                                     &format!("{path}/is_error"),
                                     "Responses cannot express an error tool result",
@@ -503,28 +515,40 @@ pub(super) fn encode(
                 for (index, part) in content.iter().enumerate() {
                     let path = format!("{path}/{index}");
                     match part {
-                        AssistantContent::Text(part) => {
-                            pending.push(encode_text(part, &path, options, &mut losses)?);
+                        AssistantContent::Text {
+                            text,
+                            cache_control,
+                            ..
+                        } => {
+                            cache(cache_control, &path, options, &mut losses)?;
+                            pending.push(json!({"type":"input_text", "text":text}));
                         }
                         AssistantContent::ToolCall {
-                            id,
+                            provider_id,
+                            call_id,
                             name,
                             arguments,
                             cache_control,
+                            ..
                         } => {
                             flush_message(&mut pending, "assistant", &mut items);
                             cache(cache_control, &path, options, &mut losses)?;
-                            items.push(json!({"type":"function_call", "call_id":id, "name":name, "arguments":arguments}));
+                            let mut item = json!({"type":"function_call", "call_id":call_id, "name":name, "arguments":arguments});
+                            if let Some(id) = provider_id {
+                                item["id"] = json!(id);
+                            }
+                            items.push(item);
                         }
                         AssistantContent::Reasoning {
-                            id,
+                            provider_id,
                             text,
                             summary,
                             opaque,
+                            ..
                         } => {
                             flush_message(&mut pending, "assistant", &mut items);
                             if let Some(item) = encode_reasoning(
-                                id,
+                                provider_id,
                                 text,
                                 summary,
                                 opaque,
@@ -545,11 +569,28 @@ pub(super) fn encode(
             }
         }
     }
-    let mut body = NativeFields::from_iter([
+    let mut body = Map::from_iter([
         ("model".into(), json!(request.model)),
         ("input".into(), json!(items)),
-        ("stream".into(), json!(input.stream)),
+        (
+            "stream".into(),
+            json!(request.delivery.is_some_and(|delivery| delivery.stream)),
+        ),
     ]);
+    body.extend(encode_settings(request, options, &mut losses)?);
+    put!(&mut body, "store", store);
+    Ok(Encoded {
+        body: body.into(),
+        losses,
+    })
+}
+
+pub(super) fn encode_settings(
+    request: &Request,
+    options: &ConversionOptions,
+    losses: &mut Vec<ConversionLoss>,
+) -> Result<Map<String, Value>, BridgeError> {
+    let mut body = Map::new();
     if let Some(parameters) = &request.parameters {
         if !parameters.stop.is_empty() {
             return Err(unrepresentable(
@@ -584,7 +625,7 @@ pub(super) fn encode(
                 "Responses has no thinking mode field",
             ));
         }
-        let mut value = NativeFields::new();
+        let mut value = Map::new();
         put!(&mut value, "effort", reasoning.effort.as_ref());
         put!(&mut value, "summary", reasoning.summary.as_ref());
         body.insert("reasoning".into(), value.into());
@@ -599,13 +640,16 @@ pub(super) fn encode(
                 schema,
                 strict,
             } => {
+                let name = name.as_ref().ok_or_else(|| {
+                    unrepresentable("/response_format/name", "Responses requires a schema name")
+                })?;
                 if !schema.is_object() {
                     return Err(invalid(
                         "/response_format/schema",
                         "schema must be an object",
                     ));
                 }
-                let mut value = NativeFields::from_iter([
+                let mut value = Map::from_iter([
                     ("type".into(), json!("json_schema")),
                     ("name".into(), json!(name)),
                     ("schema".into(), schema.clone()),
@@ -631,14 +675,14 @@ pub(super) fn encode(
                     cache_control,
                 } = tool;
                 let path = format!("/tools/definitions/{index}");
-                cache(cache_control, &path, options, &mut losses)?;
+                cache(cache_control, &path, options, losses)?;
                 if !parameters.is_object() && !parameters.is_null() {
                     return Err(invalid(
                         &format!("{path}/parameters"),
                         "parameters must be an object or null",
                     ));
                 }
-                let mut value = NativeFields::from_iter([
+                let mut value = Map::from_iter([
                     ("type".into(), json!("function")),
                     ("name".into(), json!(name)),
                     ("parameters".into(), parameters.clone()),
@@ -652,14 +696,7 @@ pub(super) fn encode(
         put!(&mut body, "tool_choice", tools.choice.as_ref());
         put!(&mut body, "parallel_tool_calls", tools.parallel);
     }
-    put!(&mut body, "store", store);
-    if let Some(native) = input.native_for(&ApiFormat::RESPONSES) {
-        merge(&mut body, native, "")?;
-    }
-    Ok(Encoded {
-        body: body.into(),
-        losses,
-    })
+    Ok(body)
 }
 
 fn flush_message(pending: &mut Vec<Value>, role: &str, items: &mut Vec<Value>) {
@@ -739,7 +776,7 @@ fn encode_document(
     } else {
         "file_data"
     };
-    let mut value = NativeFields::from_iter([
+    let mut value = Map::from_iter([
         ("type".into(), json!("input_file")),
         (key.into(), json!(source_url(&part.source))),
     ]);
@@ -760,7 +797,7 @@ pub(super) fn encode_reasoning(
         drop_allowed(LossScope::Reasoning, path, options, losses)?;
         return Ok(None);
     };
-    let mut item = NativeFields::from_iter([
+    let mut item = Map::from_iter([
         ("type".into(), json!("reasoning")),
         ("id".into(), json!(id)),
         (

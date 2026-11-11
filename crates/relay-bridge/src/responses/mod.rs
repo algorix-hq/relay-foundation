@@ -1,36 +1,44 @@
 //! Responses API conversion, checked against openai 7.55.0.
 //!
 //! Request encoding emits system instructions as input items, never `instructions`.
-//! `store` is omitted unless configured or supplied natively; `include` is never added.
-//! Reasoning replay requires its original ID; opaque content is passed unchanged.
+//! `store` is omitted unless configured; `include` is never added. Request ingress
+//! rejects every field without a protocol representation, including status and phase.
+//! Reasoning replay requires `provider_id`; a Relay ID is never used for replay.
+//! Missing replay identity requires explicit Reasoning loss permission.
 //!
 //! Response decoding ignores new fields within known items, including annotations,
-//! logprobs, phase, function-call item IDs/status/async/caller/namespace, and reasoning status.
-//! Message IDs/status are retained in native `output` metadata aligned with protocol
-//! content; adjacent text parts sharing that identity are regrouped on encoding.
-//! Native `usage` retains token details not represented by the protocol.
-//! The SDK's cache-write count is mapped too; its TTL breakdown remains native.
+//! logprobs, phase, status, async, caller, and namespace. Unknown item kinds are Unknown.
+//! Top-level fields without protocol counterparts are ignored, including metadata,
+//! service_tier, previous_response_id, conversation, and request configuration echoes.
+//! Usage total_tokens and token details other than cached_tokens, cache_write_tokens,
+//! and reasoning_tokens are ignored, including cache-write TTL breakdowns.
+//! Provider response and item IDs become both Relay IDs and provider_id; missing IDs
+//! use DecodeContext.response_id and `{response_id}:{index}`, respectively.
+//! Timestamps retain observed_at and optional provider_created_at independently.
+//! OpenAPI permits numeric created_at; live gpt-5-nano returned integer 1794399223; fractional values fail Decode without truncation.
 //! Multiple response reasoning-text segments are concatenated in wire order;
 //! ingress rejects multiple segments because their boundaries cannot be retained.
 //! Reasoning input status and other unrepresented item metadata are rejected on ingress.
 //!
-//! Gateway encoding requires ID, creation time, and all required response configuration
-//! fields (`access_programs`, `instructions`, `metadata`, `parallel_tool_calls`,
-//! `temperature`, `tool_choice`, `tools`, `top_p`) from native context. None is guessed.
-//! ID may instead come from the protocol, time from `ConversionOptions::created_at`.
+//! Client response and stream envelopes share encode_settings with request encoding:
+//! tools comes from Request.tools.definitions (default []), tool_choice from its
+//! choice (default auto), parallel_tool_calls from its parallel (default true).
+//! temperature, top_p, and max_output_tokens come from Request.parameters; absent
+//! sampling values are null and absent max_output_tokens is omitted. reasoning comes
+//! from Request.reasoning and text.format from Request.response_format, both omitted
+//! when absent. instructions and access_programs are null; metadata is {}. Other
+//! unsupported echoes, including previous_response_id, are absent. Instructions are
+//! system input items, and ingress rejects unsupported configuration rather than
+//! retaining it. Client encoding uses Relay IDs and provider_created_at with observed_at
+//! as fallback. Message status follows completion; adjacent text with one ID regroups.
 //! `object` is `response`, `error` is null for normal output, status/incomplete details
 //! follow the stop reason, and `output_text` is derived from text. SDK incomplete
 //! reasons `max_messages` and `steered` round-trip as exact `Other` values.
-//! Message IDs/status must be supplied as native output metadata. Usage totals are summed; optional
-//! protocol counters required by the wire must be supplied by native usage if absent.
-//! Streaming has no native envelope in the shared contract; `stream_native` supplies
-//! these same facts, including per-item message IDs/status and function-call item
-//! IDs (distinct from call IDs), explicitly. Its `output` is an array of metadata
-//! objects keyed by protocol item index, not complete output items.
-//! Example: `[{}, {"id":"msg_1","status":"completed"}, {"id":"fc_1"}]`
-//! supplies the message and function-call identities following a reasoning item.
+//! Usage totals are summed; missing required cache-read/cache-write/reasoning counters are errors.
+//! The SDK permits absent usage, including on terminal responses; provisional usage
+//! is never promoted to final usage. Function call_id stays distinct from item id.
 //!
-//! Streaming ignores lifecycle-only in_progress/queued/compaction progress, content
+//! Streaming ignores lifecycle-only queued/compaction progress, content
 //! part and reasoning-summary part lifecycle and hosted-tool progress events.
 //! Text/arguments/reasoning `.done` echoes and final item snapshots are reconciled
 //! against streamed prefixes: only missing suffixes are emitted, never duplicates.
@@ -45,16 +53,15 @@ mod stream;
 mod wire;
 
 use crate::{
-    ApiFormat, Bridge, BridgeError, ConversionOptions, Encoded, Input, NativeFields, Output,
-    StreamDecoder, StreamEncoder,
+    ApiFormat, Bridge, BridgeError, ConversionOptions, DecodeContext, Encoded, StreamDecoder,
+    StreamEncoder,
 };
+use relay_protocol::{Request, Response};
 
 #[derive(Clone, Debug, Default)]
 pub struct ResponsesBridgeConfig {
-    /// None leaves the provider default unchanged; native `store` then wins.
+    /// None leaves the provider default unchanged.
     pub store: Option<bool>,
-    /// Required gateway response facts and item metadata, used only by stream encoding.
-    pub stream_native: NativeFields,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -77,38 +84,44 @@ impl Bridge for ResponsesBridge {
         &ApiFormat::RESPONSES
     }
 
-    fn decode_request(&self, body: &[u8]) -> Result<Input, BridgeError> {
+    fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
         request::decode(body)
     }
 
     fn encode_request(
         &self,
-        input: &Input,
+        input: &Request,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
         request::encode(input, options, self.config.store)
     }
 
-    fn decode_response(&self, body: &[u8]) -> Result<Output, BridgeError> {
-        response::decode(body)
+    fn decode_response(
+        &self,
+        body: &[u8],
+        context: &DecodeContext,
+    ) -> Result<Response, BridgeError> {
+        response::decode(body, context)
     }
 
     fn encode_response(
         &self,
-        output: &Output,
+        request: &Request,
+        output: &Response,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        response::encode(output, options)
+        response::encode(request, output, options)
     }
 
-    fn stream_decoder(&self) -> Box<dyn StreamDecoder> {
-        Box::new(stream::Decoder::default())
+    fn stream_decoder(&self, context: &DecodeContext) -> Box<dyn StreamDecoder> {
+        Box::new(stream::Decoder::new(context.clone()))
     }
 
-    fn stream_encoder(&self, options: &ConversionOptions) -> Box<dyn StreamEncoder> {
-        Box::new(stream::Encoder::new(
-            options.clone(),
-            self.config.stream_native.clone(),
-        ))
+    fn stream_encoder(
+        &self,
+        request: &Request,
+        options: &ConversionOptions,
+    ) -> Box<dyn StreamEncoder> {
+        Box::new(stream::Encoder::new(options.clone(), request.clone()))
     }
 }

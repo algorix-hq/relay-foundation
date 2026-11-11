@@ -8,9 +8,7 @@
   "incomplete_details": null,
   "access_programs": null,
   "instructions": null,
-  "metadata": {
-    "consumer": "test"
-  },
+  "metadata": {},
   "parallel_tool_calls": true,
   "temperature": null,
   "top_p": null,
@@ -33,6 +31,7 @@
     },
     {
       "type": "function_call",
+      "id": "fc_1",
       "call_id": "call_1",
       "name": "lookup",
       "arguments": "{ \"key\":1, \"key\": 2 }"
@@ -65,16 +64,10 @@
     "total_tokens": 29,
     "input_tokens_details": {
       "cached_tokens": 5,
-      "cache_write_tokens": 2,
-      "cache_write_tokens_details": {
-        "ttl_12h_tokens": 2,
-        "ttl_30m_tokens": 0
-      }
+      "cache_write_tokens": 2
     },
     "output_tokens_details": {
       "reasoning_tokens": 4
     }
-  },
-  "service_tier": "default",
-  "previous_response_id": "resp_previous"
+  }
 }

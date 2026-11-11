@@ -144,13 +144,5 @@
       "strict": false
     }
   },
-  "previous_response_id": "resp_previous",
-  "include": [
-    "reasoning.encrypted_content"
-  ],
-  "store": false,
-  "metadata": {
-    "consumer": "test"
-  },
   "stream": true
 }

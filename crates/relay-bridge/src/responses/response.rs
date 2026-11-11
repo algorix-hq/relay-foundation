@@ -1,78 +1,59 @@
-use relay_protocol::{AssistantContent, Response, StopReason, TextPart, Usage, Version};
-use serde_json::{Value, json};
+use relay_protocol::{
+    AssistantContent, ConversionLoss, Request, Response, StopReason, Timestamp, Usage, Version,
+};
+use serde_json::{Map, Value, json};
 
 use super::{request, wire::*};
-use crate::{ApiFormat, BridgeError, ConversionOptions, Encoded, LossScope, NativeFields, Output};
+use crate::{BridgeError, ConversionOptions, DecodeContext, Encoded, LossScope};
 
-pub(super) fn decode(body: &[u8]) -> Result<Output, BridgeError> {
-    let value =
-        serde_json::from_slice(body).map_err(|error| decode_error("", error.to_string()))?;
-    decode_value(&value)
+pub(super) fn identity(
+    value: &Value,
+    context: &DecodeContext,
+) -> Result<(String, Option<String>), BridgeError> {
+    let provider_id: Option<String> = field!(value, "id", "")?;
+    let id = provider_id
+        .clone()
+        .or_else(|| context.response_id.clone())
+        .ok_or_else(|| {
+            decode_error(
+                "/id",
+                "response ID missing and no adapter fallback supplied",
+            )
+        })?;
+    Ok((id, provider_id))
 }
 
-pub(super) fn decode_value(value: &Value) -> Result<Output, BridgeError> {
-    let mut native = decode_object(value, "")?;
-    reject_failure(value)?;
-    let id = Some(field!(value, "id", "")?);
-    let model = field!(value, "model", "")?;
-    let items: Vec<Value> = field!(value, "output", "")?;
+pub(super) fn decode(body: &[u8], context: &DecodeContext) -> Result<Response, BridgeError> {
+    let value: Value =
+        serde_json::from_slice(body).map_err(|error| decode_error("", error.to_string()))?;
+    decode_object(&value, "")?;
+    reject_failure(&value)?;
+    let (id, provider_id) = identity(&value, context)?;
+    let items: Vec<Value> = field!(&value, "output", "")?;
     let mut content = Vec::new();
-    let mut metadata = Vec::new();
     for (index, item) in items.iter().enumerate() {
-        let start = content.len();
-        decode_item(item, &format!("/output/{index}"), &mut content)?;
-        for _ in start..content.len() {
-            metadata.push(if item.get("type").and_then(Value::as_str) == Some("message") {
-                json!({"id":item.get("id").cloned().unwrap_or(Value::Null), "status":item.get("status").cloned().unwrap_or(Value::Null)})
-            } else { json!({}) });
-        }
+        decode_item(item, &format!("/output/{index}"), &id, index, &mut content)?;
     }
-    let stop_reason = stop_reason(value)?;
-    let usage = decode_usage(value.get("usage"))?;
-    for key in ["id", "model", "output", "output_text", "usage"] {
-        native.remove(key);
-    }
-    native.insert("output".into(), json!(metadata));
-    if let Some(value) = value.get("usage").filter(|value| !value.is_null()) {
-        let mut residual = decode_object(value, "/usage")?;
-        residual.remove("input_tokens");
-        residual.remove("output_tokens");
-        for (key, represented) in [
-            (
-                "input_tokens_details",
-                &["cached_tokens", "cache_write_tokens"][..],
-            ),
-            ("output_tokens_details", &["reasoning_tokens"][..]),
-        ] {
-            if let Some(details) = residual.get_mut(key).and_then(Value::as_object_mut) {
-                for key in represented {
-                    details.remove(*key);
-                }
-            }
-        }
-        native.insert("usage".into(), residual.into());
-    }
-    Ok(Output::with_native(
-        ApiFormat::RESPONSES,
-        Response {
-            version: Version::V1,
-            id,
-            model,
-            content,
-            stop_reason,
-            usage,
+    Ok(Response {
+        version: Version::V1,
+        id,
+        provider_id,
+        created_at: Timestamp {
+            observed_at: context.observed_at,
+            provider_created_at: field!(&value, "created_at", "")?,
         },
-        native,
-    ))
+        model: field!(&value, "model", "")?,
+        content,
+        stop_reason: stop_reason(&value)?,
+        usage: decode_usage(value.get("usage"))?,
+    })
 }
 
 pub(super) fn reject_failure(value: &Value) -> Result<(), BridgeError> {
-    if value.get("status").and_then(Value::as_str) == Some("failed")
-        || value.get("error").is_some_and(|value| !value.is_null())
-    {
+    if value["status"] == "failed" || value.get("error").is_some_and(|value| !value.is_null()) {
         return Err(decode_error(
             "/error",
-            "adapter should have removed the failed response before bridge decoding",
+            "provider failure should have been removed by the adapter",
         ));
     }
     Ok(())
@@ -81,33 +62,54 @@ pub(super) fn reject_failure(value: &Value) -> Result<(), BridgeError> {
 pub(super) fn decode_item(
     value: &Value,
     path: &str,
+    response_id: &str,
+    index: usize,
     out: &mut Vec<AssistantContent>,
 ) -> Result<(), BridgeError> {
+    let provider_id: Option<String> = field!(value, "id", path)?;
+    let id = provider_id
+        .clone()
+        .unwrap_or_else(|| format!("{response_id}:{index}"));
     let kind: String = field!(value, "type", path)?;
     match kind.as_str() {
         "message" => {
             let parts: Vec<Value> = field!(value, "content", path)?;
+            if parts.is_empty() {
+                out.push(AssistantContent::Text {
+                    id: id.clone(),
+                    provider_id: provider_id.clone(),
+                    text: String::new(),
+                    cache_control: None,
+                });
+            }
             for (index, part) in parts.into_iter().enumerate() {
                 let path = format!("{path}/content/{index}");
                 let kind: String = field!(&part, "type", &path)?;
                 if kind == "output_text" {
-                    out.push(AssistantContent::Text(TextPart {
+                    out.push(AssistantContent::Text {
+                        id: id.clone(),
+                        provider_id: provider_id.clone(),
                         text: field!(&part, "text", &path)?,
                         cache_control: None,
-                    }));
+                    });
                 } else {
-                    out.push(AssistantContent::Unknown { value: part });
+                    out.push(AssistantContent::Unknown {
+                        id: id.clone(),
+                        provider_id: provider_id.clone(),
+                        value: part,
+                    });
                 }
             }
         }
         "function_call" => out.push(AssistantContent::ToolCall {
-            id: field!(value, "call_id", path)?,
+            id,
+            provider_id,
+            call_id: field!(value, "call_id", path)?,
             name: field!(value, "name", path)?,
             arguments: field!(value, "arguments", path)?,
             cache_control: None,
         }),
         "reasoning" => {
-            let id = Some(field!(value, "id", path)?);
             let summary: Vec<Value> = field!(value, "summary", path)?;
             let summary = summary
                 .iter()
@@ -116,15 +118,17 @@ pub(super) fn decode_item(
                 .collect::<Result<_, _>>()?;
             let content: Option<Vec<Value>> = field!(value, "content", path)?;
             let text = content.map(|parts| parts.iter().enumerate().map(|(index, part)| field!(String; part, "text", &format!("{path}/content/{index}"))).collect::<Result<Vec<_>, _>>().map(|parts| parts.concat())).transpose()?;
-            let opaque = field!(value, "encrypted_content", path)?;
             out.push(AssistantContent::Reasoning {
                 id,
+                provider_id,
                 text,
                 summary,
-                opaque,
+                opaque: field!(value, "encrypted_content", path)?,
             });
         }
         _ => out.push(AssistantContent::Unknown {
+            id,
+            provider_id,
             value: value.clone(),
         }),
     }
@@ -138,10 +142,7 @@ pub(super) fn stop_reason(value: &Value) -> Result<StopReason, BridgeError> {
         "completed" => {
             let output: Vec<Value> = field!(value, "output", "")?;
             Ok(
-                if output
-                    .iter()
-                    .any(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
-                {
+                if output.iter().any(|item| item["type"] == "function_call") {
                     StopReason::ToolUse
                 } else {
                     StopReason::EndTurn
@@ -150,7 +151,7 @@ pub(super) fn stop_reason(value: &Value) -> Result<StopReason, BridgeError> {
         }
         "incomplete" => {
             let reason: String = field!(
-                value.get("incomplete_details").unwrap_or(&Value::Null),
+                &value["incomplete_details"],
                 "reason",
                 "/incomplete_details"
             )?;
@@ -171,8 +172,8 @@ pub(super) fn decode_usage(value: Option<&Value>) -> Result<Option<Usage>, Bridg
     let Some(value) = value.filter(|value| !value.is_null()) else {
         return Ok(None);
     };
-    let input_details = value.get("input_tokens_details").unwrap_or(&Value::Null);
-    let output_details = value.get("output_tokens_details").unwrap_or(&Value::Null);
+    let input_details = &value["input_tokens_details"];
+    let output_details = &value["output_tokens_details"];
     for (key, details) in [
         ("input_tokens_details", input_details),
         ("output_tokens_details", output_details),
@@ -205,79 +206,75 @@ pub(super) fn decode_usage(value: Option<&Value>) -> Result<Option<Usage>, Bridg
     }))
 }
 
-pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Encoded, BridgeError> {
-    let response = &output.response;
-    let mut native = output
-        .native_for(&ApiFormat::RESPONSES)
-        .cloned()
-        .unwrap_or_default();
-    let metadata = native
-        .remove("output")
-        .map(|value| parse!(Vec<NativeFields>; value, "/output"))
-        .transpose()?
-        .unwrap_or_default();
-    if !metadata.is_empty() && metadata.len() != response.content.len() {
-        return Err(invalid(
-            "/output",
-            "native output metadata must align with protocol content",
-        ));
-    }
+pub(super) fn envelope(
+    request: &Request,
+    options: &ConversionOptions,
+    losses: &mut Vec<ConversionLoss>,
+) -> Result<Map<String, Value>, BridgeError> {
+    let mut body = Map::from_iter([
+        ("tools".into(), json!([])),
+        ("tool_choice".into(), json!("auto")),
+        ("parallel_tool_calls".into(), json!(true)),
+        ("temperature".into(), Value::Null),
+        ("top_p".into(), Value::Null),
+        ("access_programs".into(), Value::Null),
+        ("instructions".into(), Value::Null),
+        ("metadata".into(), json!({})),
+    ]);
+    body.extend(request::encode_settings(request, options, losses)?);
+    Ok(body)
+}
+
+pub(super) fn encode(
+    request: &Request,
+    response: &Response,
+    options: &ConversionOptions,
+) -> Result<Encoded, BridgeError> {
     let mut losses = Vec::new();
+    let mut body = envelope(request, options, &mut losses)?;
+    let (status, incomplete_details) = encode_stop(&response.stop_reason)?;
     let mut items = Vec::<Value>::new();
     for (index, content) in response.content.iter().enumerate() {
         let path = format!("/content/{index}");
-        let mut item_metadata = metadata.get(index).cloned().unwrap_or_default();
         match content {
-            AssistantContent::Text(part) => {
-                request::cache(&part.cache_control, &path, options, &mut losses)?;
-                let id: String =
-                    required_native!(&mut item_metadata, "id", &format!("/output/{index}"))?;
-                let status: String =
-                    required_native!(&mut item_metadata, "status", &format!("/output/{index}"))?;
-                if !matches!(status.as_str(), "completed" | "incomplete" | "in_progress") {
-                    return Err(invalid(
-                        &format!("/output/{index}/status"),
-                        "invalid message status",
-                    ));
-                }
-                reject_remaining(&item_metadata, &format!("/output/{index}"))?;
-                let part = json!({"type":"output_text", "text":part.text, "annotations":[]});
-                if let Some(last) = items.last_mut().filter(|last| {
-                    last.get("type") == Some(&json!("message"))
-                        && last.get("id") == Some(&json!(id))
-                        && last.get("status") == Some(&json!(status))
-                }) {
-                    if let Some(parts) = last.get_mut("content").and_then(Value::as_array_mut) {
-                        parts.push(part);
-                    }
+            AssistantContent::Text {
+                id,
+                text,
+                cache_control,
+                ..
+            } => {
+                request::cache(cache_control, &path, options, &mut losses)?;
+                let part = json!({"type":"output_text", "text":text, "annotations":[]});
+                if let Some(parts) = items
+                    .last_mut()
+                    .filter(|item| item["type"] == "message" && item["id"] == *id)
+                    .and_then(|item| item["content"].as_array_mut())
+                {
+                    parts.push(part);
                 } else {
                     items.push(json!({"type":"message", "id":id, "role":"assistant", "status":status, "content":[part]}));
                 }
             }
             AssistantContent::ToolCall {
                 id,
+                call_id,
                 name,
                 arguments,
                 cache_control,
+                ..
             } => {
                 request::cache(cache_control, &path, options, &mut losses)?;
-                let mut item = NativeFields::from_iter([
-                    ("type".into(), json!("function_call")),
-                    ("call_id".into(), json!(id)),
-                    ("name".into(), json!(name)),
-                    ("arguments".into(), json!(arguments)),
-                ]);
-                merge(&mut item, &item_metadata, &format!("/output/{index}"))?;
-                items.push(item.into());
+                items.push(json!({"type":"function_call", "id":id, "call_id":call_id, "name":name, "arguments":arguments}));
             }
             AssistantContent::Reasoning {
                 id,
                 text,
                 summary,
                 opaque,
+                ..
             } => {
-                if let Some(value) = request::encode_reasoning(
-                    id,
+                if let Some(item) = request::encode_reasoning(
+                    &Some(id.clone()),
                     text,
                     summary,
                     opaque,
@@ -285,9 +282,7 @@ pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Enc
                     options,
                     &mut losses,
                 )? {
-                    let mut item = object(&value, &path)?;
-                    merge(&mut item, &item_metadata, &format!("/output/{index}"))?;
-                    items.push(item.into());
+                    items.push(item);
                 }
             }
             AssistantContent::Unknown { .. } => {
@@ -295,87 +290,43 @@ pub(super) fn encode(output: &Output, options: &ConversionOptions) -> Result<Enc
             }
         }
     }
-    let usage_native = native.remove("usage");
-    let usage = encode_usage(response.usage.as_ref(), usage_native)?;
-    let id = native
-        .remove("id")
-        .or_else(|| response.id.as_ref().map(|id| json!(id)))
-        .ok_or_else(|| unrepresentable("/id", "response ID is required"))?;
-    let id: String = parse!(id, "/id")?;
-    let created_at = native
-        .remove("created_at")
-        .or_else(|| options.created_at.map(|time| json!(time)))
-        .ok_or_else(|| {
-            unrepresentable(
-                "/created_at",
-                "creation time is required; bridge never reads a clock",
-            )
-        })?;
-    if !created_at.is_number() {
-        return Err(invalid("/created_at", "expected a numeric creation time"));
-    }
-    let (status, incomplete_details) = encode_stop(&response.stop_reason)?;
-    let output_text: String = items
-        .iter()
-        .filter_map(|item| item.get("content").and_then(Value::as_array))
-        .flatten()
-        .filter(|part| part.get("type").and_then(Value::as_str) == Some("output_text"))
-        .filter_map(|part| part.get("text").and_then(Value::as_str))
-        .collect();
-    let mut body = NativeFields::from_iter([
-        ("id".into(), json!(id)),
+    body.extend(Map::from_iter([
+        ("id".into(), json!(response.id)),
         ("model".into(), json!(response.model)),
-        ("created_at".into(), json!(created_at)),
+        (
+            "created_at".into(),
+            json!(
+                response
+                    .created_at
+                    .provider_created_at
+                    .unwrap_or(response.created_at.observed_at)
+            ),
+        ),
         ("object".into(), json!("response")),
         ("error".into(), Value::Null),
         ("status".into(), json!(status)),
         ("incomplete_details".into(), incomplete_details),
+        ("output_text".into(), json!(output_text(&items))),
         ("output".into(), json!(items)),
-        ("output_text".into(), json!(output_text)),
-    ]);
-    for key in [
-        "object",
-        "error",
-        "status",
-        "incomplete_details",
-        "output_text",
-    ] {
-        if let Some(value) = native.remove(key)
-            && body.get(key) != Some(&value)
-        {
-            return Err(invalid(
-                &format!("/{key}"),
-                "native field conflicts with derived response fact",
-            ));
-        }
+    ]));
+    if let Some(usage) = &response.usage {
+        body.insert("usage".into(), encode_usage(usage)?);
     }
-    for key in [
-        "access_programs",
-        "instructions",
-        "metadata",
-        "parallel_tool_calls",
-        "temperature",
-        "tool_choice",
-        "tools",
-        "top_p",
-    ] {
-        let value = native.remove(key).ok_or_else(|| {
-            unrepresentable(
-                &format!("/{key}"),
-                "required response fact must be supplied natively",
-            )
-        })?;
-        validate_response_fact(key, &value)?;
-        body.insert(key.into(), value);
-    }
-    if let Some(usage) = usage {
-        body.insert("usage".into(), usage);
-    }
-    merge(&mut body, &native, "")?;
     Ok(Encoded {
         body: body.into(),
         losses,
     })
+}
+
+pub(super) fn output_text(items: &[Value]) -> String {
+    items
+        .iter()
+        .filter(|item| item["type"] == "message")
+        .filter_map(|item| item["content"].as_array())
+        .flatten()
+        .filter(|part| part["type"] == "output_text")
+        .filter_map(|part| part["text"].as_str())
+        .collect()
 }
 
 pub(super) fn encode_stop(reason: &StopReason) -> Result<(&'static str, Value), BridgeError> {
@@ -400,105 +351,30 @@ pub(super) fn encode_stop(reason: &StopReason) -> Result<(&'static str, Value), 
     })
 }
 
-fn validate_response_fact(key: &str, value: &Value) -> Result<(), BridgeError> {
-    let valid = match key {
-        "parallel_tool_calls" => value.is_boolean(),
-        "temperature" | "top_p" => value.is_null() || value.is_number(),
-        "tools" => value.is_array(),
-        "tool_choice" => value.is_string() || value.is_object(),
-        "instructions" => value.is_null() || value.is_string() || value.is_array(),
-        _ => value.is_null() || value.is_object(),
-    };
-    if !valid {
-        return Err(invalid(
-            &format!("/{key}"),
-            "invalid required response fact",
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn encode_usage(
-    usage: Option<&Usage>,
-    native: Option<Value>,
-) -> Result<Option<Value>, BridgeError> {
-    let Some(usage) = usage else {
-        if native.is_some() {
-            return Err(invalid(
-                "/usage",
-                "native usage requires protocol token counts",
-            ));
-        }
-        return Ok(None);
-    };
-    let mut native = native
-        .map(|value| object(&value, "/usage"))
-        .transpose()?
-        .unwrap_or_default();
-    let mut input_details = native
-        .remove("input_tokens_details")
-        .map(|value| object(&value, "/usage/input_tokens_details"))
-        .transpose()?
-        .unwrap_or_default();
-    let mut output_details = native
-        .remove("output_tokens_details")
-        .map(|value| object(&value, "/usage/output_tokens_details"))
-        .transpose()?
-        .unwrap_or_default();
-    for (key, count) in [
-        ("cached_tokens", usage.cache_read_tokens),
-        ("cache_write_tokens", usage.cache_write_tokens),
-    ] {
-        let count = match count {
-            Some(count) => {
-                if input_details.contains_key(key) {
-                    return Err(invalid(
-                        &format!("/usage/input_tokens_details/{key}"),
-                        "native field collides with protocol counter",
-                    ));
-                }
-                count
-            }
-            None => required_native!(&mut input_details, key, "/usage/input_tokens_details")?,
-        };
-        input_details.insert(key.into(), json!(count));
-    }
-    let reasoning_tokens = match usage.reasoning_tokens {
-        Some(count) => {
-            if output_details.contains_key("reasoning_tokens") {
-                return Err(invalid(
-                    "/usage/output_tokens_details/reasoning_tokens",
-                    "native field collides with protocol counter",
-                ));
-            }
-            count
-        }
-        None => required_native!(
-            &mut output_details,
-            "reasoning_tokens",
-            "/usage/output_tokens_details"
-        )?,
-    };
-    output_details.insert("reasoning_tokens".into(), json!(reasoning_tokens));
+pub(super) fn encode_usage(usage: &Usage) -> Result<Value, BridgeError> {
+    let cached = usage.cache_read_tokens.ok_or_else(|| {
+        unrepresentable(
+            "/usage/input_tokens_details/cached_tokens",
+            "required counter missing",
+        )
+    })?;
+    let reasoning = usage.reasoning_tokens.ok_or_else(|| {
+        unrepresentable(
+            "/usage/output_tokens_details/reasoning_tokens",
+            "required counter missing",
+        )
+    })?;
+    let cache_write = usage.cache_write_tokens.ok_or_else(|| {
+        unrepresentable(
+            "/usage/input_tokens_details/cache_write_tokens",
+            "required counter missing",
+        )
+    })?;
     let total = usage
         .input_tokens
         .checked_add(usage.output_tokens)
         .ok_or_else(|| invalid("/usage", "token total overflows u64"))?;
-    if let Some(original) = native.remove("total_tokens")
-        && original != json!(total)
-    {
-        return Err(invalid(
-            "/usage/total_tokens",
-            "native token total disagrees with protocol counts",
-        ));
-    }
-    let mut value = NativeFields::from_iter([
-        ("input_tokens".into(), json!(usage.input_tokens)),
-        ("output_tokens".into(), json!(usage.output_tokens)),
-        ("total_tokens".into(), json!(total)),
-        ("input_tokens_details".into(), input_details.into()),
-        ("output_tokens_details".into(), output_details.into()),
-    ]);
-    merge(&mut value, &native, "/usage")?;
-    Ok(Some(value.into()))
+    Ok(
+        json!({"input_tokens":usage.input_tokens, "output_tokens":usage.output_tokens, "total_tokens":total, "input_tokens_details":{"cached_tokens":cached, "cache_write_tokens":cache_write}, "output_tokens_details":{"reasoning_tokens":reasoning}}),
+    )
 }

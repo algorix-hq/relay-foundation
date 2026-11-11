@@ -1,7 +1,7 @@
 use relay_protocol::{ConversionError, ConversionErrorKind, ConversionLoss, DecodeError};
 use serde_json::{Map, Value};
 
-use crate::{BridgeError, ConversionOptions, LossScope, NativeFields};
+use crate::{BridgeError, ConversionOptions, LossScope};
 
 pub(super) fn invalid(path: &str, message: impl Into<String>) -> BridgeError {
     ConversionError {
@@ -38,7 +38,7 @@ macro_rules! parse {
     };
 }
 
-pub(super) fn object(value: &Value, path: &str) -> Result<NativeFields, BridgeError> {
+pub(super) fn object(value: &Value, path: &str) -> Result<Map<String, Value>, BridgeError> {
     value
         .as_object()
         .cloned()
@@ -70,7 +70,7 @@ macro_rules! optional {
     };
 }
 
-pub(super) fn reject_remaining(object: &NativeFields, path: &str) -> Result<(), BridgeError> {
+pub(super) fn reject_remaining(object: &Map<String, Value>, path: &str) -> Result<(), BridgeError> {
     if let Some(key) = object.keys().next() {
         return Err(unrepresentable(
             &format!("{path}/{}", pointer_key(key)),
@@ -81,7 +81,7 @@ pub(super) fn reject_remaining(object: &NativeFields, path: &str) -> Result<(), 
 }
 
 pub(super) fn allow_keys(
-    object: &NativeFields,
+    object: &Map<String, Value>,
     keys: &[&str],
     path: &str,
 ) -> Result<(), BridgeError> {
@@ -104,23 +104,6 @@ macro_rules! put {
             $object.insert($key.into(), serde_json::json!(value));
         }
     };
-}
-
-pub(super) fn merge(
-    target: &mut NativeFields,
-    native: &NativeFields,
-    path: &str,
-) -> Result<(), BridgeError> {
-    for (key, value) in native {
-        if target.contains_key(key) {
-            return Err(invalid(
-                &format!("{path}/{}", pointer_key(key)),
-                "native field collides with generated field",
-            ));
-        }
-        target.insert(key.clone(), value.clone());
-    }
-    Ok(())
 }
 
 pub(super) fn drop_allowed(
@@ -168,16 +151,4 @@ macro_rules! field {
     };
 }
 
-macro_rules! required_native {
-    ($native:expr, $key:expr, $path:expr) => {{
-        let value = $native.remove($key).ok_or_else(|| {
-            unrepresentable(
-                &format!("{}/{}", $path, $key),
-                "required wire fact is not available",
-            )
-        })?;
-        parse!(value, &format!("{}/{}", $path, $key))
-    }};
-}
-
-pub(super) use {decoded, field, optional, parse, put, required_native, take};
+pub(super) use {decoded, field, optional, parse, put, take};

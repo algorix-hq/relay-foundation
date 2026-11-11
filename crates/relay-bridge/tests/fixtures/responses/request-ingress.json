@@ -26,9 +26,5 @@
   "top_p":0.8,
   "reasoning":{"effort":"low","summary":"auto"},
   "text":{"format":{"type":"json_schema","name":"answer","description":"The answer","schema":{"type":"object"},"strict":false}},
-  "previous_response_id":"resp_previous",
-  "include":["reasoning.encrypted_content"],
-  "store":false,
-  "metadata":{"consumer":"test"},
   "stream":true
 }
