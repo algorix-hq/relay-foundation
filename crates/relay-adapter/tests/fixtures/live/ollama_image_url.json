@@ -1,0 +1,1 @@
+{"error":{"message":"image URLs are not currently supported, please use base64 encoded data instead (ref: 868ac964-06f6-4c64-83a4-ce60b81de03e)","type":"invalid_request_error","param":null,"code":null}}

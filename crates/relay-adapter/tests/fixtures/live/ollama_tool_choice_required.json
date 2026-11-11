@@ -1,0 +1,1 @@
+{"id":"chatcmpl-84","object":"chat.completion","created":1794401012,"model":"gemma4:31b","system_fingerprint":"fp_ollama","choices":[{"index":0,"message":{"role":"assistant","content":"Hi! How can I help you today?"},"finish_reason":"stop"}],"usage":{"prompt_tokens":60,"completion_tokens":10,"total_tokens":70,"prompt_tokens_details":{"cached_tokens":0}}}
