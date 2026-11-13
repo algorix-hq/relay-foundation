@@ -1,6 +1,6 @@
-# 0. 한 요청의 변환 과정
+# 0. How one request is converted
 
-같은 `Request`를 세 bridge와 내장 adapter에 차례로 통과시킨 실제 출력이다. 아래 JSON은 키 순서만 정리했다.
+Actual output of passing the same `Request` through the three bridges and the built-in adapters. In the JSON below, only the key order was rearranged for readability.
 
 ## Request
 
@@ -18,7 +18,7 @@ let request = Request {
     model: "target-model".into(),
     messages: vec![
         Message::User { content: vec![
-            UserContent::Text(TextPart { text: "사진과 조회 결과를 설명해 줘".into(), cache_control: None }),
+            UserContent::Text(TextPart { text: "Describe the photo and the lookup result".into(), cache_control: None }),
             UserContent::Image(ImagePart {
                 source: MediaSource::Url { url: "https://example.com/photo.png".into() },
                 detail: Some(ImageDetail("high".into())), cache_control: None,
@@ -31,13 +31,13 @@ let request = Request {
         }]},
         Message::User { content: vec![UserContent::ToolResult {
             tool_call_id: "call_1".into(),
-            content: vec![ToolResultContent::Text(TextPart { text: "서울".into(), cache_control: None })],
+            content: vec![ToolResultContent::Text(TextPart { text: "Seoul".into(), cache_control: None })],
             is_error: None, cache_control: None,
         }]},
     ],
     tools: Some(ToolConfig {
         definitions: vec![Tool::Function {
-            name: "lookup".into(), description: Some("키로 조회".into()),
+            name: "lookup".into(), description: Some("Look up by key".into()),
             parameters: json!({
                 "type": "object", "properties": {"key": {"type": "string"}},
                 "required": ["key"], "additionalProperties": false
@@ -61,13 +61,13 @@ let request = Request {
   "version": "1",
   "model": "target-model",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "image", "source": {"type": "url", "url": "https://example.com/photo.png"}, "detail": "high"}]},
+    {"role": "user", "content": [{"type": "text", "text": "Describe the photo and the lookup result"}, {"type": "image", "source": {"type": "url", "url": "https://example.com/photo.png"}, "detail": "high"}]},
     {"role": "assistant", "content": [{"type": "tool_call", "id": "resp_previous:0", "call_id": "call_1", "name": "lookup", "arguments": "{ \"key\": \"photo\" }"}]},
-    {"role": "user", "content": [{"type": "tool_result", "tool_call_id": "call_1", "content": [{"type": "text", "text": "서울"}]}]}
+    {"role": "user", "content": [{"type": "tool_result", "tool_call_id": "call_1", "content": [{"type": "text", "text": "Seoul"}]}]}
   ],
   "tools": {
     "definitions": [
-      {"type": "function", "name": "lookup", "description": "키로 조회", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
+      {"type": "function", "name": "lookup", "description": "Look up by key", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
     ],
     "choice": "auto",
     "parallel": false
@@ -99,13 +99,13 @@ let messages = MessagesBridge::new().encode_request(&request, &lossy)?;
 |---|---|---|---|
 | `messages` | `messages` | `input` | `messages` |
 | `parameters.max_output_tokens` | `max_completion_tokens` | `max_output_tokens` | `max_tokens` |
-| `parameters.temperature` | `temperature` | `temperature` | 생략, `losses`에 보고 |
+| `parameters.temperature` | `temperature` | `temperature` | omitted, reported in `losses` |
 | `reasoning.effort` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` |
 | `delivery` | `stream`, `stream_options.include_usage` | `stream` | `stream` |
-| image `detail` | `image_url.detail` | `detail` | 생략, `losses`에 보고 |
-| `tool_call` | assistant의 `tool_calls[]` | `function_call` 항목 | `tool_use` 블록 |
-| `tool_call.arguments` | 문자열 그대로 | 문자열 그대로 | 파싱한 `input` 객체 |
-| `tool_result` | `role: "tool"` 메시지 | `function_call_output` 항목 | user의 `tool_result` 블록 |
+| image `detail` | `image_url.detail` | `detail` | omitted, reported in `losses` |
+| `tool_call` | assistant `tool_calls[]` | `function_call` item | `tool_use` block |
+| `tool_call.arguments` | string as is | string as is | parsed `input` object |
+| `tool_result` | `role: "tool"` message | `function_call_output` item | user `tool_result` block |
 | `tools.parallel: false` | `parallel_tool_calls: false` | `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` |
 
 Chat Completions:
@@ -114,12 +114,12 @@ Chat Completions:
 {
   "model": "target-model",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "image_url", "image_url": {"url": "https://example.com/photo.png", "detail": "high"}}]},
+    {"role": "user", "content": [{"type": "text", "text": "Describe the photo and the lookup result"}, {"type": "image_url", "image_url": {"url": "https://example.com/photo.png", "detail": "high"}}]},
     {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{ \"key\": \"photo\" }"}}]},
-    {"role": "tool", "tool_call_id": "call_1", "content": "서울"}
+    {"role": "tool", "tool_call_id": "call_1", "content": "Seoul"}
   ],
   "tools": [
-    {"type": "function", "function": {"name": "lookup", "description": "키로 조회", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}}
+    {"type": "function", "function": {"name": "lookup", "description": "Look up by key", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}}
   ],
   "tool_choice": "auto",
   "parallel_tool_calls": false,
@@ -137,12 +137,12 @@ Responses:
 {
   "model": "target-model",
   "input": [
-    {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "input_image", "image_url": "https://example.com/photo.png", "detail": "high"}]},
+    {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Describe the photo and the lookup result"}, {"type": "input_image", "image_url": "https://example.com/photo.png", "detail": "high"}]},
     {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{ \"key\": \"photo\" }"},
-    {"type": "function_call_output", "call_id": "call_1", "output": [{"type": "input_text", "text": "서울"}]}
+    {"type": "function_call_output", "call_id": "call_1", "output": [{"type": "input_text", "text": "Seoul"}]}
   ],
   "tools": [
-    {"type": "function", "name": "lookup", "description": "키로 조회", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
+    {"type": "function", "name": "lookup", "description": "Look up by key", "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
   ],
   "tool_choice": "auto",
   "parallel_tool_calls": false,
@@ -159,12 +159,12 @@ Messages:
 {
   "model": "target-model",
   "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "사진과 조회 결과를 설명해 줘"}, {"type": "image", "source": {"type": "url", "url": "https://example.com/photo.png"}}]},
+    {"role": "user", "content": [{"type": "text", "text": "Describe the photo and the lookup result"}, {"type": "image", "source": {"type": "url", "url": "https://example.com/photo.png"}}]},
     {"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "lookup", "input": {"key": "photo"}}]},
-    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": [{"type": "text", "text": "서울"}]}]}
+    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": [{"type": "text", "text": "Seoul"}]}]}
   ],
   "tools": [
-    {"name": "lookup", "description": "키로 조회", "input_schema": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
+    {"name": "lookup", "description": "Look up by key", "input_schema": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": false}, "strict": true}
   ],
   "tool_choice": {"type": "auto", "disable_parallel_tool_use": true},
   "max_tokens": 4096,
@@ -177,14 +177,14 @@ Messages:
 /messages/0/content/1/detail: Messages cannot express image detail
 ```
 
-손실을 허용하지 않으면 첫 표현 불가 항목에서 `BridgeError::Conversion`을 반환한다. 위 요청에 다음 값을 하나씩 추가했을 때의 결과다.
+Without allowed loss, encoding returns `BridgeError::Conversion` at the first unrepresentable item. The table shows the result of adding each value to the request above, one at a time.
 
-| 추가한 값 | Chat Completions | Responses | Messages |
+| Added value | Chat Completions | Responses | Messages |
 |---|---|---|---|
-| `reasoning.budget_tokens` | `/reasoning/budget_tokens` | `/reasoning/budget_tokens` | `/reasoning/budget_tokens` (`Invalid`), `thinking: Enabled`와 함께면 통과 |
-| `tool_result.is_error: Some(false)` | 통과 | `/messages/2/content/0/is_error` | 통과 |
-| `response_format: JsonObject` | 통과 | 통과 | `/response_format` |
-| `reasoning.summary` | `/reasoning/summary` | 통과 | `/reasoning/summary` |
+| `reasoning.budget_tokens` | `/reasoning/budget_tokens` | `/reasoning/budget_tokens` | `/reasoning/budget_tokens` (`Invalid`), passes together with `thinking: Enabled` |
+| `tool_result.is_error: Some(false)` | passes | `/messages/2/content/0/is_error` | passes |
+| `response_format: JsonObject` | passes | passes | `/response_format` |
+| `reasoning.summary` | `/reasoning/summary` | passes | `/reasoning/summary` |
 
 ## Adapter `build_request`
 
@@ -206,14 +206,14 @@ let (provider_request, losses) = anthropic.build_request(&request)?;
 
 | Adapter | Bridge | `method` `url` | `headers` | `body` |
 |---|---|---|---|---|
-| `openai` | Responses | `POST https://api.openai.com/v1/responses` | `content-type: application/json`, `authorization: Bearer KEY` | Responses 본문과 같음 |
-| `openai_chat` | Chat Completions | `POST https://api.openai.com/v1/chat/completions` | `content-type`, `authorization` | Chat Completions 본문과 같음 |
-| `anthropic` | Messages | `POST https://api.anthropic.com/v1/messages` | `content-type`, `authorization: Bearer KEY`, `anthropic-version: 2026-10-21` | Messages 본문과 같음, `losses` 2개 |
-| `ollama` | Chat Completions | `POST https://ollama.com/v1/chat/completions` | `content-type`, `authorization` | `max_completion_tokens` 대신 `max_tokens: 4096` |
+| `openai` | Responses | `POST https://api.openai.com/v1/responses` | `content-type: application/json`, `authorization: Bearer KEY` | Same as the Responses body |
+| `openai_chat` | Chat Completions | `POST https://api.openai.com/v1/chat/completions` | `content-type`, `authorization` | Same as the Chat Completions body |
+| `anthropic` | Messages | `POST https://api.anthropic.com/v1/messages` | `content-type`, `authorization: Bearer KEY`, `anthropic-version: 2026-10-21` | Same as the Messages body, 2 `losses` |
+| `ollama` | Chat Completions | `POST https://ollama.com/v1/chat/completions` | `content-type`, `authorization` | `max_tokens: 4096` instead of `max_completion_tokens` |
 
 # 1. Protocol (`relay-protocol`)
 
-## Request 만들기
+## Building a Request
 
 ```rust
 use relay_protocol::{
@@ -227,7 +227,7 @@ let mut request = Request {
     model: "target-model".into(),
     messages: vec![Message::User {
         content: vec![UserContent::Text(TextPart {
-            text: "사진과 조회 결과를 설명해 줘".into(), cache_control: None,
+            text: "Describe the photo and the lookup result".into(), cache_control: None,
         })],
     }],
     tools: None,
@@ -263,7 +263,7 @@ request.messages.push(Message::User {
     content: vec![UserContent::ToolResult {
         tool_call_id: "call_1".into(),
         content: vec![ToolResultContent::Text(TextPart {
-            text: "서울".into(), cache_control: None,
+            text: "Seoul".into(), cache_control: None,
         })],
         is_error: Some(false), cache_control: None,
     }],
@@ -275,7 +275,7 @@ use serde_json::json;
 
 request.tools = Some(ToolConfig {
     definitions: vec![Tool::Function {
-        name: "lookup".into(), description: Some("키로 조회".into()),
+        name: "lookup".into(), description: Some("Look up by key".into()),
         parameters: json!({
             "type": "object", "properties": {"key": {"type": "string"}},
             "required": ["key"], "additionalProperties": false
@@ -297,7 +297,7 @@ let wire = serde_json::to_string_pretty(&request)?;
       "content": [
         {
           "type": "text",
-          "text": "사진과 조회 결과를 설명해 줘"
+          "text": "Describe the photo and the lookup result"
         },
         {
           "type": "image",
@@ -330,7 +330,7 @@ let wire = serde_json::to_string_pretty(&request)?;
           "content": [
             {
               "type": "text",
-              "text": "서울"
+              "text": "Seoul"
             }
           ],
           "is_error": false
@@ -343,7 +343,7 @@ let wire = serde_json::to_string_pretty(&request)?;
       {
         "type": "function",
         "name": "lookup",
-        "description": "키로 조회",
+        "description": "Look up by key",
         "parameters": {
           "type": "object",
           "properties": {
@@ -388,7 +388,7 @@ let wire = serde_json::to_string_pretty(&request)?;
   "response_format": {
     "type": "json_schema",
     "name": "result",
-    "description": "결과",
+    "description": "Result",
     "schema": {
       "type": "object"
     },
@@ -397,7 +397,7 @@ let wire = serde_json::to_string_pretty(&request)?;
 }
 ```
 
-## Response 읽기
+## Reading a Response
 
 ```json
 {
@@ -410,7 +410,7 @@ let wire = serde_json::to_string_pretty(&request)?;
     {
       "type": "text",
       "id": "resp_1:0",
-      "text": "조회했어"
+      "text": "Looked it up"
     },
     {
       "type": "tool_call",
@@ -424,7 +424,7 @@ let wire = serde_json::to_string_pretty(&request)?;
       "id": "reasoning_1",
       "provider_id": "reasoning_1",
       "summary": [
-        "조회 필요"
+        "Lookup needed"
       ],
       "opaque": "opaque-value"
     },
@@ -464,32 +464,32 @@ for part in &response.content {
         }
         AssistantContent::Reasoning { id, provider_id, text, summary, opaque } => {
             match text.as_deref() {
-                None => println!("추론 텍스트 없음"),
-                Some("") => println!("빈 추론 텍스트 있음"),
+                None => println!("No reasoning text"),
+                Some("") => println!("Empty reasoning text"),
                 Some(text) => println!("{text}"),
             }
-            println!("ID: {id}, 제공자 ID: {provider_id:?}, 요약: {summary:?}, 보존할 값: {opaque:?}");
+            println!("ID: {id}, provider ID: {provider_id:?}, summary: {summary:?}, preserved value: {opaque:?}");
         }
-        AssistantContent::Unknown { value, .. } => println!("미해석 출력: {value}"),
+        AssistantContent::Unknown { value, .. } => println!("Uninterpreted output: {value}"),
     }
 }
 if let StopReason::Other(value) = &response.stop_reason {
-    println!("알 수 없는 정상 종료 사유: {value}");
+    println!("Unknown normal stop reason: {value}");
 }
 ```
 
-## StreamEvent 순서
+## StreamEvent order
 
 ```json
 {"type": "start", "response_id": "resp_1", "provider_id": "resp_1", "created_at": {"observed_at": 1235, "provider_created_at": 1234}, "model": "target-model"}
 {"type": "metadata", "scope": "response", "usage": {"input_tokens": 20, "output_tokens": 3}}
 {"type": "item_start", "index": 0, "id": "reasoning_1", "provider_id": "reasoning_1", "item": {"type": "reasoning"}}
-{"type": "delta", "index": 0, "delta": {"type": "reasoning_text", "text": "확인 중"}}
-{"type": "delta", "index": 0, "delta": {"type": "reasoning_summary", "summary_index": 0, "text": "조회"}}
+{"type": "delta", "index": 0, "delta": {"type": "reasoning_text", "text": "Checking"}}
+{"type": "delta", "index": 0, "delta": {"type": "reasoning_summary", "summary_index": 0, "text": "Lookup"}}
 {"type": "delta", "index": 0, "delta": {"type": "reasoning_opaque", "value": "opaque-value"}}
 {"type": "item_end", "index": 0}
 {"type": "item_start", "index": 1, "id": "resp_1:1", "item": {"type": "text"}}
-{"type": "delta", "index": 1, "delta": {"type": "text", "text": "답변"}}
+{"type": "delta", "index": 1, "delta": {"type": "text", "text": "Answer"}}
 {"type": "item_end", "index": 1}
 {"type": "item_start", "index": 2, "id": "resp_1:2", "item": {"type": "tool_call"}}
 {"type": "metadata", "scope": "item", "index": 2, "call_id": "call_1", "name": "lookup"}
@@ -499,7 +499,7 @@ if let StopReason::Other(value) = &response.stop_reason {
 {"type": "stop", "stop_reason": "tool_use", "usage": {"input_tokens": 20, "output_tokens": 9}}
 ```
 
-## RelayError 분기
+## Branching on RelayError
 
 ```rust
 use relay_protocol::{ProviderErrorCategory, RelayError};
@@ -508,25 +508,25 @@ fn describe(error: &RelayError) -> String {
     match error {
         RelayError::Provider(error) => {
             let category = match error.category {
-                ProviderErrorCategory::Authentication => "인증",
-                ProviderErrorCategory::PermissionDenied => "권한",
-                ProviderErrorCategory::InsufficientQuota => "할당량",
-                ProviderErrorCategory::RateLimited => "속도 제한",
-                ProviderErrorCategory::Overloaded => "과부하",
-                ProviderErrorCategory::InvalidRequest => "요청",
-                ProviderErrorCategory::UnsupportedFeature => "미지원 기능",
-                ProviderErrorCategory::ModelNotFound => "모델 없음",
-                ProviderErrorCategory::ContextLengthExceeded => "입력 길이",
-                ProviderErrorCategory::ServerError => "서버",
-                ProviderErrorCategory::Unknown => "미분류",
+                ProviderErrorCategory::Authentication => "authentication",
+                ProviderErrorCategory::PermissionDenied => "permission",
+                ProviderErrorCategory::InsufficientQuota => "quota",
+                ProviderErrorCategory::RateLimited => "rate limit",
+                ProviderErrorCategory::Overloaded => "overloaded",
+                ProviderErrorCategory::InvalidRequest => "request",
+                ProviderErrorCategory::UnsupportedFeature => "unsupported feature",
+                ProviderErrorCategory::ModelNotFound => "model not found",
+                ProviderErrorCategory::ContextLengthExceeded => "context length",
+                ProviderErrorCategory::ServerError => "server",
+                ProviderErrorCategory::Unknown => "unclassified",
             };
-            format!("{category}: {}, 대기 정보: {:?}", error.message, error.retry_after)
+            format!("{category}: {}, retry after: {:?}", error.message, error.retry_after)
         }
-        RelayError::Conversion(error) => format!("변환 {}: {}", error.path, error),
-        RelayError::Decode(error) => format!("해석 {}: {}", error.path, error),
-        RelayError::IncompleteStream(error) => format!("미완료: {error}"),
-        RelayError::Configuration(error) => format!("설정: {error}"),
-        RelayError::UnsupportedOperation(error) => format!("미지원: {error}"),
+        RelayError::Conversion(error) => format!("conversion {}: {}", error.path, error),
+        RelayError::Decode(error) => format!("decode {}: {}", error.path, error),
+        RelayError::IncompleteStream(error) => format!("incomplete: {error}"),
+        RelayError::Configuration(error) => format!("configuration: {error}"),
+        RelayError::UnsupportedOperation(error) => format!("unsupported: {error}"),
     }
 }
 ```
@@ -542,7 +542,7 @@ use relay_bridge::chat_completions::MaxTokensField;
 
 let client = ChatCompletionsBridge::new();
 let input: Request = client.decode_request(&client_body)?;
-println!("모델: {}, 전달: {:?}", input.model, input.delivery);
+println!("model: {}, delivery: {:?}", input.model, input.delivery);
 
 let options = ConversionOptions::default();
 let context = DecodeContext { response_id: Some("fallback-id".into()), observed_at: 1235 };
@@ -580,7 +580,7 @@ let stateless = ResponsesBridge::with_config(ResponsesBridgeConfig { store: Some
 let encoded = stateless.encode_request(&request, &ConversionOptions::default())?;
 ```
 
-## ConversionOptions와 손실 보고
+## ConversionOptions and loss reporting
 
 ```rust
 use relay_bridge::{ConversionOptions, LossScope};
@@ -591,12 +591,12 @@ let options = ConversionOptions {
 };
 let encoded = client.encode_response(&input, &output, &options)?;
 for ConversionLoss { path, message } in encoded.losses {
-    eprintln!("생략: {path}: {message}");
+    eprintln!("omitted: {path}: {message}");
 }
 let client_json = encoded.body;
 ```
 
-## Custom Bridge 구현
+## Implementing a custom Bridge
 
 ```rust
 use relay_bridge::{
@@ -611,20 +611,20 @@ impl Bridge for GatewayJsonBridge {
     fn format(&self) -> &ApiFormat { &self.format }
 
     fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
-        todo!("요청 문법·표현 불가 오류는 BridgeError::Conversion")
+        todo!("malformed or unrepresentable requests return BridgeError::Conversion")
     }
     fn encode_request(
         &self, request: &Request, options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        todo!("표현 불가는 Conversion, 허용한 생략은 losses")
+        todo!("unrepresentable input returns Conversion; allowed omissions go to losses")
     }
     fn decode_response(&self, body: &[u8], context: &DecodeContext) -> Result<Response, BridgeError> {
-        todo!("성공 응답만 해석하고 해석 실패는 BridgeError::Decode")
+        todo!("decode success responses only; decode failures return BridgeError::Decode")
     }
     fn encode_response(
         &self, request: &Request, response: &Response, options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        todo!("표현 불가는 Conversion, 허용한 생략은 losses")
+        todo!("unrepresentable input returns Conversion; allowed omissions go to losses")
     }
     fn stream_decoder(&self, context: &DecodeContext) -> Box<dyn StreamDecoder> {
         Box::new(GatewayJsonDecoder { stopped: false })
@@ -639,14 +639,14 @@ use relay_protocol::{ConversionError, ConversionErrorKind, DecodeError};
 
 let invalid_request = BridgeError::Conversion(ConversionError {
     kind: ConversionErrorKind::Invalid,
-    path: "/messages/0".into(), message: "content가 필요함".into(),
+    path: "/messages/0".into(), message: "content is required".into(),
 });
 let unrepresentable = BridgeError::Conversion(ConversionError {
     kind: ConversionErrorKind::Unrepresentable,
-    path: "/content/0".into(), message: "대상 형식에 대응 항목이 없음".into(),
+    path: "/content/0".into(), message: "no counterpart in the target format".into(),
 });
 let malformed_success = BridgeError::Decode(DecodeError {
-    path: "/content".into(), message: "배열이 필요함".into(),
+    path: "/content".into(), message: "expected an array".into(),
 });
 ```
 ```rust
@@ -667,7 +667,7 @@ impl StreamDecoder for GatewayJsonDecoder {
     fn finish(&mut self, _out: &mut Vec<StreamEvent>) -> Result<(), BridgeError> {
         if !self.stopped {
             return Err(BridgeError::IncompleteStream(IncompleteStream {
-                message: "stop 없이 입력이 끝남".into(),
+                message: "input ended without stop".into(),
             }));
         }
         Ok(())
@@ -685,7 +685,7 @@ impl StreamEncoder for GatewayJsonEncoder {
         &mut self, event: &StreamEvent, out: &mut Vec<Frame>,
         losses: &mut Vec<ConversionLoss>,
     ) -> Result<(), BridgeError> {
-        todo!("허용한 생략은 발생 즉시 losses에 추가하고, 표현 불가 시 BridgeError::Conversion")
+        todo!("push allowed omissions to losses as they occur; return BridgeError::Conversion when unrepresentable")
     }
     fn finish(
         &mut self, _out: &mut Vec<Frame>, _losses: &mut Vec<ConversionLoss>,
@@ -697,7 +697,7 @@ impl StreamEncoder for GatewayJsonEncoder {
 
 # 3. Adapter (`relay-adapter`)
 
-## 내장 Adapter
+## Built-in Adapters
 
 ```rust
 use std::sync::Arc;
@@ -729,7 +729,7 @@ let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/re
     .with_bridge(Arc::new(ResponsesBridge::new()))?;
 ```
 
-## 소비자 HTTP 전송
+## Consumer HTTP transport
 
 ```rust
 use relay_adapter::{Headers, Method, ProviderRequest};
@@ -784,7 +784,7 @@ fn headers_of(response: &reqwest::Response) -> Result<Headers, GatewayError> {
 }
 ```
 
-## 일반 요청
+## Non-streaming request
 
 ```rust
 use relay_adapter::{AdapterExt, AnthropicAdapter};
@@ -797,7 +797,7 @@ async fn complete(
     let adapter = AnthropicAdapter::new("sk-test");
     let input = client.decode_request(client_body)?;
     let (request, request_losses) = adapter.build_request(&input)?;
-    for loss in request_losses { eprintln!("요청 생략: {loss}"); }
+    for loss in request_losses { eprintln!("request omitted: {loss}"); }
     let response = send(http, request).await?;
     let status = response.status().as_u16();
     let headers = headers_of(&response)?;
@@ -809,7 +809,7 @@ async fn complete(
 }
 ```
 
-## 스트리밍 A: Transcoder
+## Streaming A: Transcoder
 
 ```rust
 use std::sync::Arc;
@@ -818,7 +818,7 @@ use relay_adapter::{AdapterExt, ChatCompletionsErrors, ErrorEncoder};
 let mut input = client.decode_request(&client_body)?;
 input.delivery = Some(relay_protocol::Delivery { stream: true, stream_usage: true });
 let (request, request_losses) = adapter.build_request(&input)?;
-for loss in request_losses { eprintln!("요청 생략: {loss}"); }
+for loss in request_losses { eprintln!("request omitted: {loss}"); }
 let mut response = send(&http, request).await?;
 let status = response.status().as_u16();
 let headers = headers_of(&response)?;
@@ -847,15 +847,15 @@ if transcoder.report().outcome.is_none() {
     for frame in transcoder.finish() { emit(frame)?; }
 }
 let report = transcoder.report();
-for loss in &report.losses { eprintln!("응답 생략: {loss}"); }
+for loss in &report.losses { eprintln!("response omitted: {loss}"); }
 match &report.outcome {
-    Some(Outcome::Completed) => println!("정상 완료"),
-    Some(Outcome::Failed(error)) => eprintln!("오류 프레임 전송 후 종료: {error}"),
-    None => println!("아직 실행 중이거나 중단됨"),
+    Some(Outcome::Completed) => println!("completed"),
+    Some(Outcome::Failed(error)) => eprintln!("ended after sending an error frame: {error}"),
+    None => println!("still running or aborted"),
 }
 ```
 
-## 스트리밍 B: AdapterStream 직접
+## Streaming B: AdapterStream directly
 
 ```rust
 use relay_adapter::AdapterStream;
@@ -887,7 +887,7 @@ async fn collect_before_reply(
 }
 ```
 
-## 오류 응답
+## Error responses
 
 ```rust
 use relay_adapter::{ChatCompletionsErrors, ErrorEncoder, MessagesErrors, ResponsesErrors, Stage};
@@ -928,7 +928,7 @@ fn frames_for_failure(
 }
 ```
 
-## Model 목록
+## Model list
 
 ```rust
 use relay_adapter::{Adapter, AdapterExt, ModelPage};
@@ -949,7 +949,7 @@ for model_id in &page.model_ids { println!("{model_id}"); }
 let next_cursor = page.next_cursor.as_deref();
 ```
 
-## Custom Adapter 구현
+## Implementing a custom Adapter
 
 ```rust
 use std::sync::Arc;
@@ -984,7 +984,7 @@ impl Adapter for GatewayAdapter {
         &self, model: &str, body: Value, stream: bool,
     ) -> Result<ProviderRequest, ConfigurationError> {
         if self.token.is_empty() {
-            return Err(ConfigurationError { message: "인증 토큰이 필요함".into() });
+            return Err(ConfigurationError { message: "auth token is required".into() });
         }
         Ok(ProviderRequest {
             method: Method::Post, url: "https://provider.example/v1/generate".into(),
@@ -1032,7 +1032,7 @@ fn gateway_failure(payload: &Value, status: Option<u16>, headers: &Headers) -> P
     });
     ProviderError {
         category,
-        message: payload["message"].as_str().unwrap_or("제공자 요청 실패").into(),
+        message: payload["message"].as_str().unwrap_or("provider request failed").into(),
         code, http_status: status,
         request_id: headers.get("request-id").map(str::to_owned), retry_after,
     }
@@ -1113,7 +1113,7 @@ let body = response.bytes().await?;
 let output = adapter.parse_response(status, &headers, &body)?;
 ```
 
-## ID 생성기와 시계 주입
+## Injecting an ID generator and clock
 
 ```rust
 let conversion = Conversion::new(bridge, &[ApiFormat::CHAT_COMPLETIONS], ConversionOptions::default())?
@@ -1124,26 +1124,26 @@ assert_eq!(context.response_id.as_deref(), Some("response-fallback"));
 assert_eq!(context.observed_at, 1235);
 ```
 
-# 4. 오류 결과
+# 4. Error outcomes
 
 ```json
 [
-  {"상황":"요청의 Unknown 콘텐츠를 손실 허용 없이 인코딩","결과":"Conversion(Unrepresentable)","클라이언트":"요청 단계 400"},
-  {"상황":"bridge와 어댑터의 API 형식 불일치","결과":"Configuration","클라이언트":"500"},
-  {"상황":"503의 비JSON 오류 본문","결과":"Provider(ServerError)","http_status":503,"클라이언트":"500"},
-  {"상황":"200의 명시적 과부하 오류 본문","결과":"Provider(Overloaded)","http_status":200,"클라이언트":"Chat Completions/Responses 503; Messages 529"},
-  {"상황":"비성공 HTTP를 어댑터가 잘못 성공 처리","결과":"Provider(Unknown)","클라이언트":"결과 단계 502; 원래 상태 보존"},
-  {"상황":"200의 잘못된 성공 본문","결과":"Decode","클라이언트":"결과 단계 502"},
-  {"상황":"스트림 HTTP 429, 빈 본문을 classify","결과":"Provider(RateLimited)","http_status":429,"클라이언트":"응답 시작 전 429"},
-  {"상황":"정상 데이터 뒤 제공자 오류 프레임","결과":"이전 이벤트 뒤 Provider(Overloaded)","http_status":null,"클라이언트":"이전 프레임 뒤 형식별 오류 프레임; 합성 stop 없음"},
-  {"상황":"같은 정상 프레임 안에서 이벤트 해석 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 형식별 오류 프레임"},
-  {"상황":"정상 프레임 뒤 framing 실패","결과":"이전 이벤트 뒤 Decode","클라이언트":"이전 프레임 뒤 형식별 오류 프레임"},
-  {"상황":"정상 EOF인데 stop 없음","결과":"버퍼 이벤트 뒤 IncompleteStream","클라이언트":"이전 프레임 뒤 형식별 오류 프레임; 합성 완료 없음"},
-  {"상황":"클라이언트 인코더 push가 일부 출력 후 실패","결과":"Conversion","클라이언트":"부분 출력 뒤 형식별 오류 프레임"},
-  {"상황":"클라이언트 인코더 finish가 꼬리 출력 후 실패","결과":"Conversion","클라이언트":"꼬리 출력 뒤 형식별 오류 프레임"},
-  {"상황":"정상 stop·finish, 허용한 생략 있음","결과":"Outcome::Completed와 손실 목록","클라이언트":"정상 프레임과 인코더 꼬리 출력"},
-  {"상황":"전송 단절·취소, finish 없이 drop","outcome":null,"클라이언트":"자동 프레임 없음; Transport/Cancelled는 소비자 처리"},
-  {"상황":"모델 탐색 미지원","결과":"UnsupportedOperation(list_models)","클라이언트":"501"},
-  {"상황":"빈 모델 페이지와 다음 커서","결과":"ModelPage","클라이언트":"정상 목록 응답"}
+  {"situation":"Encode Unknown request content without allowed loss","result":"Conversion(Unrepresentable)","client":"400 at request stage"},
+  {"situation":"API format mismatch between bridge and adapter","result":"Configuration","client":"500"},
+  {"situation":"Non-JSON error body with 503","result":"Provider(ServerError)","http_status":503,"client":"500"},
+  {"situation":"Explicit overload error body with 200","result":"Provider(Overloaded)","http_status":200,"client":"Chat Completions/Responses 503; Messages 529"},
+  {"situation":"Adapter wrongly treats non-success HTTP as success","result":"Provider(Unknown)","client":"502 at result stage; original status preserved"},
+  {"situation":"Malformed success body with 200","result":"Decode","client":"502 at result stage"},
+  {"situation":"Stream HTTP 429, classify on empty body","result":"Provider(RateLimited)","http_status":429,"client":"429 before response starts"},
+  {"situation":"Provider error frame after normal data","result":"Provider(Overloaded) after earlier events","http_status":null,"client":"Format-specific error frame after earlier frames; no synthesized stop"},
+  {"situation":"Event decode failure inside the same normal frame","result":"Decode after earlier events","client":"Format-specific error frame after earlier frames"},
+  {"situation":"Framing failure after normal frames","result":"Decode after earlier events","client":"Format-specific error frame after earlier frames"},
+  {"situation":"Normal EOF without stop","result":"IncompleteStream after buffered events","client":"Format-specific error frame after earlier frames; no synthesized completion"},
+  {"situation":"Client encoder push fails after partial output","result":"Conversion","client":"Format-specific error frame after partial output"},
+  {"situation":"Client encoder finish fails after tail output","result":"Conversion","client":"Format-specific error frame after tail output"},
+  {"situation":"Normal stop and finish, with allowed omissions","result":"Outcome::Completed with loss list","client":"Normal frames and encoder tail output"},
+  {"situation":"Transport drop or cancellation, dropped without finish","outcome":null,"client":"No automatic frames; consumer handles Transport/Cancelled"},
+  {"situation":"Model discovery unsupported","result":"UnsupportedOperation(list_models)","client":"501"},
+  {"situation":"Empty model page with next cursor","result":"ModelPage","client":"Normal list response"}
 ]
 ```
