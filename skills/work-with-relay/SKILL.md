@@ -1,6 +1,6 @@
 ---
 name: work-with-relay
-description: Use relay-foundation (crates relay-protocol, relay-bridge, relay-adapter) correctly from a consumer codebase. Use this skill whenever code depends on or should depend on relay-foundation or any `relay_*` crate, or the user wants to build an LLM gateway or proxy that translates between Chat Completions, Responses, and Messages APIs, route requests to OpenAI, Anthropic, or an OpenAI-compatible server (Ollama and similar), stream provider output back to a client in another API format, handle Relay conversion or provider errors, or write a custom adapter for another provider such as Kiro or ChatGPT. Trigger even when the user only says "relay", "gateway", or names the bridge or adapter types. Do not use it for changes inside the relay-foundation repository itself.
+description: Use relay-foundation crates (`relay_protocol`, `relay_bridge`, `relay_adapter`) from a consumer codebase. Covers bridging Chat Completions, Responses, and Messages; OpenAI, Anthropic, and OpenAI-compatible adapters; streaming; errors; and custom adapters. Use it when code depends on a `relay_*` crate or the user wants to use Relay.
 ---
 
 # Working with Relay
