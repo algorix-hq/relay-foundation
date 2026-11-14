@@ -4,9 +4,9 @@ Relay is not published to crates.io. Consumers use git dependencies pinned to a 
 
 ```toml
 [dependencies]
-relay-protocol = { git = "https://github.com/algorix-hq/relay-foundation", tag = "v1.0.0-alpha.1" }
-relay-bridge   = { git = "https://github.com/algorix-hq/relay-foundation", tag = "v1.0.0-alpha.1" }
-relay-adapter  = { git = "https://github.com/algorix-hq/relay-foundation", tag = "v1.0.0-alpha.1" }
+relay-protocol = { git = "https://github.com/algorix-hq/relay-foundation", tag = "v1.0.0-alpha.2" }
+relay-bridge   = { git = "https://github.com/algorix-hq/relay-foundation", tag = "v1.0.0-alpha.2" }
+relay-adapter  = { git = "https://github.com/algorix-hq/relay-foundation", tag = "v1.0.0-alpha.2" }
 serde_json = "1"
 ```
 

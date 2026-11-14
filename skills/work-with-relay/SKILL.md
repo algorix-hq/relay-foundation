@@ -25,7 +25,7 @@ client frames ◀ Transcoder (adapter.open_stream + client stream encoder) ◀ p
 
 These come from the library's design. Code that breaks them usually compiles but behaves wrong.
 
-1. **Pin a `v1` or later tag.** Depend through git with `tag = "v1.0.0-alpha.1"` or later. Never use a branch, `rev` on an untagged commit, crates.io, or a `v0.x` tag (those are the old, incompatible implementation). All three crates must use the same tag. See `references/dependency.md`.
+1. **Pin a `v1` or later tag.** Depend through git with `tag = "v1.0.0-alpha.2"` or later. Never use a branch, `rev` on an untagged commit, crates.io, or a `v0.x` tag (those are the old, incompatible implementation). All three crates must use the same tag. See `references/dependency.md`.
 2. **Only the adapter classifies provider errors.** Never inspect a provider body yourself to decide whether it is an error, and never map HTTP status codes to error categories in consumer code. Pass status, headers, and body to `parse_response`, `open_stream` / `RejectedResponse::classify`, or `parse_models`. Bridges have no provider error variant by design.
 3. **Conversion is strict by default.** Anything the target format cannot express returns `ConversionError` (`Unrepresentable`, `Invalid`, or `Unsupported`). Do not pre-strip fields to make conversion succeed. If dropping is acceptable, allow it explicitly with `LossScope` and log or return every `ConversionLoss` you get back. See `references/errors.md`.
 4. **Keep the decoded client `Request`.** `encode_response` and the stream encoder need the same `Request` the client bridge decoded at ingress.
