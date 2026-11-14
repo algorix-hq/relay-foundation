@@ -44,6 +44,7 @@ Read only what the task needs. The references give exact type names, method sign
 | Add or upgrade the dependency | `references/dependency.md` |
 | Build or read `Request`, `Response`, `StreamEvent` values | `references/protocol.md` |
 | Wire a client bridge to an adapter, non-streaming or streaming, plus HTTP glue | `references/composition.md` |
+| Select Chat Completions `reasoning_content` or `reasoning` for history, responses, and streams | `references/composition.md`, `references/errors.md` |
 | Map errors to client responses, allow or report losses, know what a format cannot express | `references/errors.md` |
 | Support a provider that is not built in | `references/custom-adapter.md` |
 

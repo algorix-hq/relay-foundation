@@ -42,9 +42,28 @@ pub enum MaxTokensField {
     MaxTokens,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReasoningField {
+    #[default]
+    Disabled,
+    ReasoningContent,
+    Reasoning,
+}
+
+impl ReasoningField {
+    pub(super) fn name(self) -> Option<&'static str> {
+        match self {
+            Self::Disabled => None,
+            Self::ReasoningContent => Some("reasoning_content"),
+            Self::Reasoning => Some("reasoning"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionsBridge {
     max_tokens_field: MaxTokensField,
+    reasoning_field: ReasoningField,
 }
 
 impl ChatCompletionsBridge {
@@ -52,7 +71,14 @@ impl ChatCompletionsBridge {
         Self::default()
     }
     pub fn with_max_tokens_field(max_tokens_field: MaxTokensField) -> Self {
-        Self { max_tokens_field }
+        Self {
+            max_tokens_field,
+            ..Self::default()
+        }
+    }
+    pub fn with_reasoning_field(mut self, reasoning_field: ReasoningField) -> Self {
+        self.reasoning_field = reasoning_field;
+        self
     }
 }
 
@@ -61,21 +87,26 @@ impl Bridge for ChatCompletionsBridge {
         &ApiFormat::CHAT_COMPLETIONS
     }
     fn decode_request(&self, body: &[u8]) -> Result<Request, BridgeError> {
-        request::decode(body)
+        request::decode(body, self.reasoning_field)
     }
     fn encode_request(
         &self,
         request: &Request,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        request::encode(request, options, self.max_tokens_field)
+        request::encode(
+            request,
+            options,
+            self.max_tokens_field,
+            self.reasoning_field,
+        )
     }
     fn decode_response(
         &self,
         body: &[u8],
         context: &DecodeContext,
     ) -> Result<Response, BridgeError> {
-        response::decode(body, context)
+        response::decode(body, context, self.reasoning_field)
     }
     fn encode_response(
         &self,
@@ -83,18 +114,56 @@ impl Bridge for ChatCompletionsBridge {
         response: &Response,
         options: &ConversionOptions,
     ) -> Result<Encoded, BridgeError> {
-        response::encode(response, options)
+        response::encode(response, options, self.reasoning_field)
     }
     fn stream_decoder(&self, context: &DecodeContext) -> Box<dyn StreamDecoder> {
-        Box::new(stream::Decoder::new(context.clone()))
+        Box::new(stream::Decoder::new(context.clone(), self.reasoning_field))
     }
     fn stream_encoder(
         &self,
         _request: &Request,
         options: &ConversionOptions,
     ) -> Box<dyn StreamEncoder> {
-        Box::new(stream::Encoder::new(options.clone()))
+        Box::new(stream::Encoder::new(options.clone(), self.reasoning_field))
     }
+}
+
+pub(super) fn decode_reasoning(
+    value: &Value,
+    path: &str,
+    field: ReasoningField,
+) -> Result<Option<String>, BridgeError> {
+    let value = value
+        .as_object()
+        .ok_or_else(|| decode_error(path, "expected message or delta object"))?;
+    let mut reasoning = None;
+    for name in ["reasoning_content", "reasoning", "reasoning_details"] {
+        let Some(value) = value.get(name).filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let path = format!("{path}/{name}");
+        if name == "reasoning_details" {
+            let details = value
+                .as_array()
+                .ok_or_else(|| decode_error(&path, "expected reasoning details array"))?;
+            if details.is_empty() {
+                continue;
+            }
+        } else {
+            let text = value
+                .as_str()
+                .ok_or_else(|| decode_error(&path, "expected reasoning string"))?;
+            if field.name() == Some(name) {
+                reasoning = Some(text.to_owned());
+                continue;
+            }
+        }
+        return Err(decode_error(
+            &path,
+            "reasoning field is not enabled or has no protocol representation",
+        ));
+    }
+    Ok(reasoning)
 }
 
 fn invalid(path: &str, message: impl Into<String>) -> BridgeError {

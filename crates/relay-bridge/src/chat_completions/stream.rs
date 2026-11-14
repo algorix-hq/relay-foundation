@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use relay_protocol::*;
 use serde_json::{Value, json};
@@ -8,11 +8,13 @@ use crate::Frame;
 
 pub(super) struct Decoder {
     context: DecodeContext,
+    reasoning_field: ReasoningField,
     response_id: Option<String>,
     model: Option<String>,
     done: bool,
     next_index: u32,
     text: Option<u32>,
+    reasoning: Option<u32>,
     refusal: Option<u32>,
     tools: BTreeMap<u32, DecodedTool>,
     open: Vec<u32>,
@@ -28,14 +30,16 @@ struct DecodedTool {
 }
 
 impl Decoder {
-    pub(super) fn new(context: DecodeContext) -> Self {
+    pub(super) fn new(context: DecodeContext, reasoning_field: ReasoningField) -> Self {
         Self {
             context,
+            reasoning_field,
             response_id: None,
             model: None,
             done: false,
             next_index: 0,
             text: None,
+            reasoning: None,
             refusal: None,
             tools: BTreeMap::new(),
             open: Vec::new(),
@@ -213,6 +217,20 @@ impl StreamDecoder for Decoder {
         {
             self.reason = Some(stop_reason(&reason));
         }
+        if let Some(text) = decode_reasoning(delta, "/choices/0/delta", self.reasoning_field)? {
+            let index = match self.reasoning {
+                Some(index) => index,
+                None => {
+                    let index = self.start_item(StreamItem::Reasoning, out)?;
+                    self.reasoning = Some(index);
+                    index
+                }
+            };
+            out.push(StreamEvent::Delta {
+                index,
+                delta: StreamDelta::ReasoningText { text },
+            });
+        }
         if let Some(text) = read::<Option<String>>(&delta["content"], "/choices/0/delta/content")? {
             let index = match self.text {
                 Some(index) => index,
@@ -270,10 +288,17 @@ impl StreamDecoder for Decoder {
 
 pub(super) struct Encoder {
     options: ConversionOptions,
+    reasoning_field: ReasoningField,
     header: Option<Value>,
     items: BTreeMap<u32, EncodedItem>,
     next_tool_index: u32,
     stopped: bool,
+    pending: VecDeque<PendingFrame>,
+}
+
+struct PendingFrame {
+    reasoning_index: Option<u32>,
+    frame: Frame,
 }
 
 struct EncodedItem {
@@ -283,17 +308,20 @@ struct EncodedItem {
 enum EncodedKind {
     Text,
     Tool(u32),
+    Reasoning { has_text: bool },
     Omitted(LossScope),
 }
 
 impl Encoder {
-    pub(super) fn new(options: ConversionOptions) -> Self {
+    pub(super) fn new(options: ConversionOptions, reasoning_field: ReasoningField) -> Self {
         Self {
             options,
+            reasoning_field,
             header: None,
             items: BTreeMap::new(),
             next_tool_index: 0,
             stopped: false,
+            pending: VecDeque::new(),
         }
     }
 
@@ -327,8 +355,8 @@ impl Encoder {
     }
 }
 
-impl StreamEncoder for Encoder {
-    fn push(
+impl Encoder {
+    fn encode(
         &mut self,
         event: &StreamEvent,
         out: &mut Vec<Frame>,
@@ -363,8 +391,6 @@ impl StreamEncoder for Encoder {
                     return Err(invalid("", "Start required before metadata"));
                 }
                 match scope {
-                    // Provisional usage is skipped: this format sends only final
-                    // usage, which still arrives on Stop, so no fact is lost.
                     MetadataScope::Response { model, .. } => {
                         if let Some(model) = model {
                             if let Some(header) = &mut self.header {
@@ -375,9 +401,9 @@ impl StreamEncoder for Encoder {
                     }
                     MetadataScope::Item {
                         index,
+                        provider_id,
                         call_id,
                         name,
-                        ..
                     } => {
                         let path = format!("/items/{index}");
                         let item = self
@@ -397,10 +423,26 @@ impl StreamEncoder for Encoder {
                             }
                             self.delta(json!({"tool_calls":[call]}), out)?;
                         }
+                        if provider_id.is_some()
+                            && matches!(item.kind, EncodedKind::Reasoning { .. })
+                        {
+                            if item.ended {
+                                return Err(invalid(&path, "metadata requires an open item"));
+                            }
+                            omit(&self.options, losses, LossScope::Reasoning, &path)?;
+                            if let Some(item) = self.items.get_mut(index) {
+                                item.kind = EncodedKind::Omitted(LossScope::Reasoning);
+                            }
+                        }
                     }
                 }
             }
-            StreamEvent::ItemStart { index, item, .. } => {
+            StreamEvent::ItemStart {
+                index,
+                provider_id,
+                item,
+                ..
+            } => {
                 if self.header.is_none() {
                     return Err(invalid("", "Start required before stream content"));
                 }
@@ -432,8 +474,20 @@ impl StreamEncoder for Encoder {
                         EncodedKind::Tool(wire_index)
                     }
                     StreamItem::Reasoning => {
-                        omit(&self.options, losses, LossScope::Reasoning, &path)?;
-                        EncodedKind::Omitted(LossScope::Reasoning)
+                        let multiple = self
+                            .items
+                            .values()
+                            .any(|item| matches!(item.kind, EncodedKind::Reasoning { .. }));
+                        if let Some(field) = self.reasoning_field.name()
+                            && provider_id.is_none()
+                            && !multiple
+                        {
+                            self.delta(json!({field:""}), out)?;
+                            EncodedKind::Reasoning { has_text: false }
+                        } else {
+                            omit(&self.options, losses, LossScope::Reasoning, &path)?;
+                            EncodedKind::Omitted(LossScope::Reasoning)
+                        }
                     }
                     StreamItem::Unknown => {
                         omit(&self.options, losses, LossScope::UnknownContent, &path)?;
@@ -447,39 +501,59 @@ impl StreamEncoder for Encoder {
                 let path = format!("/items/{index}");
                 let item = self
                     .items
-                    .get(index)
+                    .get_mut(index)
                     .filter(|item| !item.ended)
                     .ok_or_else(|| invalid(&path, "delta requires an open item"))?;
-                match (&item.kind, delta) {
+                let delta = match (&mut item.kind, delta) {
                     (EncodedKind::Text, StreamDelta::Text { text }) => {
-                        self.delta(json!({"content":text}), out)?
+                        Some(json!({"content":text}))
                     }
-                    (EncodedKind::Tool(index), StreamDelta::ToolCallArguments { text }) => self
-                        .delta(
-                            json!({"tool_calls":[{"index":index,"function":{"arguments":text}}]}),
-                            out,
-                        )?,
+                    (EncodedKind::Tool(index), StreamDelta::ToolCallArguments { text }) => {
+                        Some(json!({"tool_calls":[{"index":index,"function":{"arguments":text}}]}))
+                    }
+                    (EncodedKind::Reasoning { has_text }, StreamDelta::ReasoningText { text }) => {
+                        *has_text = true;
+                        let field = self
+                            .reasoning_field
+                            .name()
+                            .ok_or_else(|| invalid(&path, "reasoning field is disabled"))?;
+                        Some(json!({field:text}))
+                    }
+                    (
+                        kind @ EncodedKind::Reasoning { .. },
+                        StreamDelta::ReasoningSummary { .. } | StreamDelta::ReasoningOpaque { .. },
+                    ) => {
+                        omit(&self.options, losses, LossScope::Reasoning, &path)?;
+                        *kind = EncodedKind::Omitted(LossScope::Reasoning);
+                        None
+                    }
                     (
                         EncodedKind::Omitted(LossScope::Reasoning),
                         StreamDelta::ReasoningText { .. }
                         | StreamDelta::ReasoningSummary { .. }
                         | StreamDelta::ReasoningOpaque { .. },
-                    ) => {}
+                    ) => None,
                     (
                         EncodedKind::Omitted(LossScope::UnknownContent),
                         StreamDelta::Unknown { .. },
-                    ) => {}
+                    ) => None,
                     _ => return Err(invalid(&path, "delta does not match item kind")),
+                };
+                if let Some(delta) = delta {
+                    self.delta(delta, out)?;
                 }
             }
             StreamEvent::ItemEnd { index } => {
+                let path = format!("/items/{index}");
                 let item = self
                     .items
                     .get_mut(index)
                     .filter(|item| !item.ended)
-                    .ok_or_else(|| {
-                        invalid(&format!("/items/{index}"), "ItemEnd requires an open item")
-                    })?;
+                    .ok_or_else(|| invalid(&path, "ItemEnd requires an open item"))?;
+                if matches!(item.kind, EncodedKind::Reasoning { has_text: false }) {
+                    omit(&self.options, losses, LossScope::Reasoning, &path)?;
+                    item.kind = EncodedKind::Omitted(LossScope::Reasoning);
+                }
                 item.ended = true;
             }
             StreamEvent::Stop { stop_reason, usage } => {
@@ -504,6 +578,56 @@ impl StreamEncoder for Encoder {
             }
         }
         Ok(())
+    }
+}
+
+impl StreamEncoder for Encoder {
+    fn push(
+        &mut self,
+        event: &StreamEvent,
+        out: &mut Vec<Frame>,
+        losses: &mut Vec<ConversionLoss>,
+    ) -> Result<(), BridgeError> {
+        let mut frames = Vec::new();
+        let result = self.encode(event, &mut frames, losses);
+        let reasoning_index = match event {
+            StreamEvent::ItemStart {
+                index,
+                item: StreamItem::Reasoning,
+                ..
+            }
+            | StreamEvent::Delta {
+                index,
+                delta: StreamDelta::ReasoningText { .. },
+            } => Some(*index),
+            _ => None,
+        };
+        self.pending
+            .extend(frames.into_iter().map(|frame| PendingFrame {
+                reasoning_index,
+                frame,
+            }));
+        while let Some(pending) = self.pending.front() {
+            if let Some(index) = pending.reasoning_index {
+                let item = self.items.get(&index).ok_or_else(|| {
+                    invalid(&format!("/items/{index}"), "reasoning state missing")
+                })?;
+                if let EncodedKind::Reasoning { has_text } = item.kind
+                    && !item.ended
+                    && (!has_text || self.options.allow_loss.contains(&LossScope::Reasoning))
+                {
+                    break;
+                }
+                if matches!(item.kind, EncodedKind::Omitted(LossScope::Reasoning)) {
+                    self.pending.pop_front();
+                    continue;
+                }
+            }
+            if let Some(pending) = self.pending.pop_front() {
+                out.push(pending.frame);
+            }
+        }
+        result
     }
 
     fn finish(

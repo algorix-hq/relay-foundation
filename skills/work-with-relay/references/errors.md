@@ -154,9 +154,13 @@ These come from the built-in bridges' `encode_request`. "Loss" means the field i
 | Field | Result |
 |---|---|
 | `reasoning.budget_tokens`, `reasoning.summary`, `reasoning.thinking` | Error (only `effort` is carried) |
+| Assistant reasoning content | One text-only item is carried when `ReasoningField::ReasoningContent` or `ReasoningField::Reasoning` is selected; otherwise Loss `Reasoning` |
+| Reasoning summaries, opaque values, provider identity, or multiple reasoning item boundaries | Not representable in the selected string field; Loss `Reasoning`, never silently merged |
 | `cache_control` anywhere | Loss `CacheControl` |
 | `DocumentPart.title`, URL documents | Error |
 | `ToolResult { is_error: Some(true) }`, non-text tool results | Error |
 | `JsonSchema` without `name` | Error |
+
+**Breaking decoding behavior:** Chat Completions now rejects data in known reasoning fields when `ReasoningField::Disabled` (the default), or when the field is not the selected one, instead of silently discarding it. This applies to request/history, responses, and stream deltas. The selected field accepts string reasoning text only; `reasoning_details` is not supported. Decoding has no `ConversionOptions` escape hatch. Configure `.with_reasoning_field(...)` explicitly on the relevant bridge; `reasoning_effort` does not select a field. See `composition.md` for configuration.
 
 For a field marked Error, the gateway's options are to reject the request with the `ConversionError` (the default and usually right), or to change product behavior deliberately, for example routing that request to a provider whose format can express it. Do not delete the field from the client JSON to get past the error; that hides a decision from the client.

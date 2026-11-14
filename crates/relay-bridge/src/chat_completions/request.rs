@@ -3,7 +3,7 @@ use serde_json::{Map, Value, json};
 
 use super::*;
 
-pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
+pub(super) fn decode(body: &[u8], reasoning_field: ReasoningField) -> Result<Request, BridgeError> {
     let value = serde_json::from_slice(body).map_err(|e| invalid("", e.to_string()))?;
     let mut fields = object(value, "")?;
     let model = required(&mut fields, "model", "")?;
@@ -11,7 +11,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
     let messages = messages
         .into_iter()
         .enumerate()
-        .map(|(i, m)| decode_message(m, &format!("/messages/{i}")))
+        .map(|(i, m)| decode_message(m, &format!("/messages/{i}"), reasoning_field))
         .collect::<Result<_, _>>()?;
     let stream = optional(&mut fields, "stream", "")?.unwrap_or(false);
     let stream_usage = if let Some(value) = fields.remove("stream_options").filter(|v| !v.is_null())
@@ -266,10 +266,41 @@ fn decode_text(value: Value, path: &str) -> Result<Vec<TextPart>, BridgeError> {
         .collect()
 }
 
-fn decode_message(value: Value, path: &str) -> Result<Message, BridgeError> {
+fn decode_message(
+    value: Value,
+    path: &str,
+    reasoning_field: ReasoningField,
+) -> Result<Message, BridgeError> {
     let message_id = path;
+    let reasoning = if value["role"] == "assistant" {
+        decode_reasoning(&value, path, reasoning_field).map_err(|error| match error {
+            BridgeError::Decode(error) => {
+                let field_name = error.path.rsplit('/').next().unwrap_or_default();
+                let structurally_valid = value.get(field_name).is_some_and(|value| {
+                    if field_name == "reasoning_details" {
+                        value.is_array()
+                    } else {
+                        value.is_string()
+                    }
+                });
+                if structurally_valid {
+                    unrepresentable(&error.path, error.message)
+                } else {
+                    invalid(&error.path, error.message)
+                }
+            }
+            error => error,
+        })?
+    } else {
+        None
+    };
     let mut value = object(value, path)?;
     let role: String = required(&mut value, "role", path)?;
+    if role == "assistant" {
+        for name in ["reasoning_content", "reasoning", "reasoning_details"] {
+            value.remove(name);
+        }
+    }
     let content = value.remove("content");
     let content_path = format!("{path}/content");
     let result = match role.as_str() {
@@ -320,20 +351,32 @@ fn decode_message(value: Value, path: &str) -> Result<Message, BridgeError> {
             }
         }
         "assistant" => {
-            let mut parts = content
-                .filter(|v| !v.is_null())
-                .map(|v| decode_text(v, &content_path))
-                .transpose()?
-                .unwrap_or_default()
-                .into_iter()
-                .enumerate()
-                .map(|(index, part)| AssistantContent::Text {
-                    id: format!("{path}:{index}"),
+            let mut parts = Vec::new();
+            if let Some(text) = reasoning {
+                parts.push(AssistantContent::Reasoning {
+                    id: format!("{path}:0"),
                     provider_id: None,
-                    text: part.text,
-                    cache_control: part.cache_control,
-                })
-                .collect::<Vec<_>>();
+                    text: Some(text),
+                    summary: Vec::new(),
+                    opaque: None,
+                });
+            }
+            let text_offset = parts.len();
+            parts.extend(
+                content
+                    .filter(|v| !v.is_null())
+                    .map(|v| decode_text(v, &content_path))
+                    .transpose()?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, part)| AssistantContent::Text {
+                        id: format!("{path}:{}", text_offset + index),
+                        provider_id: None,
+                        text: part.text,
+                        cache_control: part.cache_control,
+                    }),
+            );
             if let Some(calls) = value.remove("tool_calls") {
                 for (i, call) in parse::<Vec<Value>>(calls, &format!("{path}/tool_calls"))?
                     .into_iter()
@@ -465,6 +508,7 @@ pub(super) fn encode(
     request: &Request,
     options: &ConversionOptions,
     max_field: MaxTokensField,
+    reasoning_field: ReasoningField,
 ) -> Result<Encoded, BridgeError> {
     let mut losses = Vec::new();
     let mut messages = Vec::new();
@@ -475,6 +519,7 @@ pub(super) fn encode(
             options,
             &mut losses,
             &mut messages,
+            reasoning_field,
         )?;
     }
     let mut body = Map::from_iter([
@@ -685,14 +730,16 @@ fn encode_message(
     options: &ConversionOptions,
     losses: &mut Vec<ConversionLoss>,
     out: &mut Vec<Value>,
+    reasoning_field: ReasoningField,
 ) -> Result<(), BridgeError> {
     let content_path = format!("{path}/content");
     match message {
         Message::System { content } | Message::Developer { content } => out.push(json!({"role":if matches!(message, Message::System { .. }) { "system" } else { "developer" },"content":text_parts(content, &content_path, options, losses)?})),
         Message::Assistant { content } => {
-            let (text, calls) = super::response::encode_content(content, &content_path, options, losses)?;
-            let mut message = json!({"role":"assistant","content":text});
-            if !calls.is_empty() { message["tool_calls"] = json!(calls); }
+            let content = super::response::encode_content(content, &content_path, options, losses, reasoning_field)?;
+            let mut message = json!({"role":"assistant","content":content.text});
+            if let Some((name, text)) = content.reasoning { message[name] = json!(text); }
+            if !content.calls.is_empty() { message["tool_calls"] = json!(content.calls); }
             out.push(message);
         }
         Message::User { content } => {

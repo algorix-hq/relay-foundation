@@ -112,7 +112,11 @@ fn unknown(response_id: &str, index: usize, value: Value) -> AssistantContent {
     }
 }
 
-pub(super) fn decode(body: &[u8], context: &DecodeContext) -> Result<Response, BridgeError> {
+pub(super) fn decode(
+    body: &[u8],
+    context: &DecodeContext,
+    reasoning_field: ReasoningField,
+) -> Result<Response, BridgeError> {
     let value: Value = serde_json::from_slice(body).map_err(|e| decode_error("", e.to_string()))?;
     if !value.is_object() {
         return Err(decode_error("", "expected response object"));
@@ -154,6 +158,15 @@ pub(super) fn decode(body: &[u8], context: &DecodeContext) -> Result<Response, B
         ));
     }
     let mut content = Vec::new();
+    if let Some(text) = decode_reasoning(message, "/choices/0/message", reasoning_field)? {
+        content.push(AssistantContent::Reasoning {
+            id: format!("{id}:0"),
+            provider_id: None,
+            text: Some(text),
+            summary: Vec::new(),
+            opaque: None,
+        });
+    }
     match &message["content"] {
         Value::Null => {}
         Value::String(text) => content.push(AssistantContent::Text {
@@ -228,14 +241,22 @@ pub(super) fn decode(body: &[u8], context: &DecodeContext) -> Result<Response, B
     })
 }
 
+pub(super) struct EncodedContent {
+    pub(super) text: Option<String>,
+    pub(super) calls: Vec<Value>,
+    pub(super) reasoning: Option<(&'static str, String)>,
+}
+
 pub(super) fn encode_content(
     content: &[AssistantContent],
     path: &str,
     options: &ConversionOptions,
     losses: &mut Vec<ConversionLoss>,
-) -> Result<(Option<String>, Vec<Value>), BridgeError> {
+    reasoning_field: ReasoningField,
+) -> Result<EncodedContent, BridgeError> {
     let mut text: Option<String> = None;
     let mut calls = Vec::new();
+    let mut reasoning = None;
     for (i, item) in content.iter().enumerate() {
         let path = format!("{path}/{i}");
         match item {
@@ -267,30 +288,59 @@ pub(super) fn encode_content(
                 )?;
                 calls.push(json!({"id":call_id,"type":"function","function":{"name":name,"arguments":arguments}}));
             }
-            AssistantContent::Reasoning { .. } => {
-                omit(options, losses, LossScope::Reasoning, &path)?
+            AssistantContent::Reasoning {
+                provider_id,
+                text,
+                summary,
+                opaque,
+                ..
+            } => {
+                if let (Some(name), Some(text)) = (reasoning_field.name(), text)
+                    && reasoning.is_none()
+                    && provider_id.is_none()
+                    && summary.is_empty()
+                    && opaque.is_none()
+                {
+                    reasoning = Some((name, text.clone()));
+                } else {
+                    omit(options, losses, LossScope::Reasoning, &path)?;
+                }
             }
             AssistantContent::Unknown { .. } => {
                 omit(options, losses, LossScope::UnknownContent, &path)?
             }
         }
     }
-    Ok((text, calls))
+    Ok(EncodedContent {
+        text,
+        calls,
+        reasoning,
+    })
 }
 
 pub(super) fn encode(
     response: &Response,
     options: &ConversionOptions,
+    reasoning_field: ReasoningField,
 ) -> Result<Encoded, BridgeError> {
     let created = response
         .created_at
         .provider_created_at
         .unwrap_or(response.created_at.observed_at);
     let mut losses = Vec::new();
-    let (text, calls) = encode_content(&response.content, "/content", options, &mut losses)?;
-    let mut message = json!({"role":"assistant","content":text,"refusal":null});
-    if !calls.is_empty() {
-        message["tool_calls"] = json!(calls);
+    let content = encode_content(
+        &response.content,
+        "/content",
+        options,
+        &mut losses,
+        reasoning_field,
+    )?;
+    let mut message = json!({"role":"assistant","content":content.text,"refusal":null});
+    if let Some((name, text)) = content.reasoning {
+        message[name] = json!(text);
+    }
+    if !content.calls.is_empty() {
+        message["tool_calls"] = json!(content.calls);
     }
     let mut body = Map::from_iter([
         ("id".into(), json!(response.id)),

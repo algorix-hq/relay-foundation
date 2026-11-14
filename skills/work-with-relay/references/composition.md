@@ -3,6 +3,7 @@
 ## Contents
 - Choosing the client bridge and adapter
 - Built-in constructors
+- Chat Completions reasoning text
 - Consumer error type and HTTP glue
 - Non-streaming request
 - Streaming with Transcoder
@@ -59,6 +60,28 @@ All three built-ins also have `allow_loss`, `with_id_generator`, and `with_clock
 Bridge constructors with options: `ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)` (`relay_bridge::chat_completions::MaxTokensField`), `MessagesBridge::with_default_max_tokens(n)`, `ResponsesBridge::with_config(ResponsesBridgeConfig { store: Some(false) })` (`relay_bridge::responses::ResponsesBridgeConfig`).
 
 Bridge methods need the `relay_bridge::Bridge` trait in scope. Consumer adapter methods (`build_request`, `parse_response`, `open_stream`, `list_models`, `parse_models`) need `relay_adapter::AdapterExt` in scope.
+
+## Chat Completions reasoning text
+
+Configure the wire field explicitly on each bridge that needs it:
+
+```rust
+use std::sync::Arc;
+use relay_adapter::OpenAiCompatibleAdapter;
+use relay_bridge::{ChatCompletionsBridge, ReasoningField};
+use relay_bridge::chat_completions::MaxTokensField;
+
+let bridge = ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)
+    .with_reasoning_field(ReasoningField::ReasoningContent);
+let adapter = OpenAiCompatibleAdapter::new("https://api.example.com/v1/chat/completions")
+    .with_bridge(Arc::new(bridge))?;
+```
+
+`with_reasoning_field(self, field)` is an instance builder, also chainable on `ChatCompletionsBridge::new()`. `ReasoningField` is exported from `relay_bridge` alongside `ChatCompletionsBridge`: `Disabled` (default), `ReasoningContent` (`reasoning_content`), or `Reasoning` (`reasoning`). It controls request/history, response, and stream conversion in both directions. The selected string field maps to protocol reasoning text; `reasoning_effort` remains independent.
+
+Choose the field from the endpoint's wire contract, not a model or provider name. There is no autodetection or provider configuration, `<think>` extraction, or `reasoning_details` support. Only text is representable, not summaries, opaque values, provider identity, or merged boundaries from multiple reasoning items. See `errors.md` for strict rejection and allowed encoding losses.
+
+The client bridge and provider bridge may select different fields. The consumer owns whether reasoning is included in replay/history; the option does not manage or append history.
 
 ## Consumer error type and HTTP glue
 

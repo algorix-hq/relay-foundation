@@ -554,6 +554,36 @@ let response_losses = encoded.losses;
 let legacy_server = ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens);
 ```
 
+## Chat Completions reasoning text
+
+```rust
+use relay_bridge::{Bridge, ChatCompletionsBridge, ConversionOptions, ReasoningField};
+use relay_bridge::chat_completions::MaxTokensField;
+use serde_json::json;
+
+let bridge = ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)
+    .with_reasoning_field(ReasoningField::ReasoningContent);
+let body = serde_json::to_vec(&json!({
+    "model": "target-model",
+    "messages": [
+        {"role": "assistant", "content": "42", "reasoning_content": "6 times 7 is 42."},
+        {"role": "user", "content": "What is half of that?"}
+    ],
+    "reasoning_effort": "high"
+}))?;
+let request = bridge.decode_request(&body)?;
+let encoded = bridge.encode_request(&request, &ConversionOptions::default())?;
+assert_eq!(encoded.body["messages"][0]["reasoning_content"], "6 times 7 is 42.");
+```
+
+`ReasoningField::Disabled` is the default. Select `ReasoningContent` for `reasoning_content` or `Reasoning` for `reasoning`. The instance builder also works on `ChatCompletionsBridge::new()`. The selection applies in both directions to request/history, responses, and stream deltas, mapping the selected string field to protocol reasoning text.
+
+Only reasoning text is representable: summaries, opaque values, provider identity, and merging multiple reasoning item boundaries into one string are not supported. Encoding unrepresentable reasoning fails unless the consumer explicitly allows `LossScope::Reasoning` and handles the reported losses.
+
+**Breaking behavior:** known reasoning fields carrying data are now rejected when disabled or unselected, rather than silently discarded during decoding. Select the field each endpoint actually uses; there is no autodetection, model lookup, or provider configuration. `reasoning_effort` is independent of this option. There is no `<think>` extraction or `reasoning_details` support.
+
+The consumer decides whether to include reasoning in replay/history; enabling the field does not add history automatically. Configure the client bridge and the adapter's provider bridge separately when their wire fields differ.
+
 ## Messages
 
 ```rust
