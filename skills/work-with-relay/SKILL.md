@@ -1,17 +1,18 @@
 ---
 name: work-with-relay
-description: Use relay-foundation crates (`relay_protocol`, `relay_bridge`, `relay_adapter`) from a consumer codebase. Covers bridging Chat Completions, Responses, and Messages; OpenAI, Anthropic, and OpenAI-compatible adapters; streaming; errors; and custom adapters. Use it when code depends on a `relay_*` crate or the user wants to use Relay.
+description: Use relay-foundation crates (`relay_protocol`, `relay_bridge`, `relay_adapter`, `relay_catalog`) from a consumer codebase. Covers bridging Chat Completions, Responses, and Messages; OpenAI, Anthropic, and OpenAI-compatible adapters; streaming; errors; and custom adapters. Use it when code depends on a `relay_*` crate or the user wants to use Relay.
 ---
 
 # Working with Relay
 
-Relay is a set of three Rust crates that convert LLM API traffic. It never makes network calls: the consumer owns HTTP, the async runtime, retries, and cancellation. Relay turns bytes into typed values and back, and classifies provider failures.
+Relay has three Rust crates that convert LLM API traffic and a separate catalog types crate. It never makes network calls: the consumer owns HTTP, the async runtime, retries, and cancellation. Relay turns bytes into typed values and back, and classifies provider failures.
 
 | Crate | Owns |
 |---|---|
 | `relay-protocol` | Provider-neutral data: `Request`, `Response`, `StreamEvent`, `RelayError` |
 | `relay-bridge` | One API format each: decode/encode requests, responses, and streams. Built-ins: `ChatCompletionsBridge`, `ResponsesBridge`, `MessagesBridge` |
 | `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins: `OpenAiAdapter` (Responses), `AnthropicAdapter` (Messages), `OpenAiCompatibleAdapter` (Chat Completions by default, or Responses) |
+| `relay-catalog` | Catalog data types only: `Lab`, `Provider`, `Model`, `ProviderModel`, `Spec`, `Pricing`, and `validate`. No data, no fetching |
 
 A gateway uses two bridges. The **client bridge** matches the API the gateway's caller speaks. The adapter carries its own **provider bridge** for the API the provider speaks. They are independent: a Chat Completions client can be served by an Anthropic adapter.
 
@@ -25,14 +26,14 @@ client frames ◀ Transcoder (adapter.open_stream + client stream encoder) ◀ p
 
 These come from the library's design. Code that breaks them usually compiles but behaves wrong.
 
-1. **Pin a `v1` or later tag.** Depend through git with `tag = "v1.0.0-alpha.2"` or later. Never use a branch, `rev` on an untagged commit, crates.io, or a `v0.x` tag (those are the old, incompatible implementation). All three crates must use the same tag. See `references/dependency.md`.
+1. **Pin a `v1` or later tag.** Depend through git with `tag = "v1.0.0-alpha.2"` or later. Never use a branch, `rev` on an untagged commit, crates.io, or a `v0.x` tag (those are the old, incompatible implementation). All `relay-*` crates must use the same tag. See `references/dependency.md`.
 2. **Only the adapter classifies provider errors.** Never inspect a provider body yourself to decide whether it is an error, and never map HTTP status codes to error categories in consumer code. Pass status, headers, and body to `parse_response`, `open_stream` / `RejectedResponse::classify`, or `parse_models`. Bridges have no provider error variant by design.
 3. **Conversion is strict by default.** Anything the target format cannot express returns `ConversionError` (`Unrepresentable`, `Invalid`, or `Unsupported`). Do not pre-strip fields to make conversion succeed. If dropping is acceptable, allow it explicitly with `LossScope` and log or return every `ConversionLoss` you get back. See `references/errors.md`.
 4. **Keep the decoded client `Request`.** `encode_response` and the stream encoder need the same `Request` the client bridge decoded at ingress.
 5. **Relay never synthesizes completion.** A stream that fails ends with an error, not a fake `Stop`. On transport failure or client cancellation, drop the stream or transcoder without calling `finish`. Call `finish` only at a normal end of the provider body.
 6. **Transport and cancellation are consumer errors.** `RelayError` has no transport variant. Wrap `RelayError` with your HTTP client's error in your own enum.
 7. **Protocol stays provider-neutral.** Do not add provider-specific fields to `Request` or `Response`, and do not branch on provider names when building them. Provider settings go on the adapter or bridge constructor (for example `AnthropicAdapter::version`, `OpenAiAdapter::store`).
-8. **Relay has no model catalog.** It does not know context windows, prices, or capabilities. Do not look for such APIs; keep them in consumer code.
+8. **Relay ships catalog types but no catalog data.** `relay-catalog` describes models, providers, specs, and prices; the consumer owns the data, its source, refresh, and caching. Bridges and adapters never read the catalog, so pre-checking a request against catalog data is consumer code. A missing catalog field means "not verified" and must not by itself block a request. `Model.spec` is display-only; use `ProviderModel.spec` for request decisions.
 9. **Respond to clients with the client format's error encoder.** Use `ChatCompletionsErrors`, `ResponsesErrors`, or `MessagesErrors` matching the client bridge, with `encode_error` before the response starts and `encode_stream_error` after.
 
 ## Pick the reference for the task
@@ -66,6 +67,7 @@ When you do, go straight to the file that owns the item instead of browsing:
 | `Bridge`, `StreamDecoder`, `StreamEncoder`, `ConversionOptions`, `LossScope`, `ApiFormat` | `crates/relay-bridge/src/lib.rs` |
 | Per-format encode rules | `crates/relay-bridge/src/{chat_completions,responses,messages}/request.rs` |
 | Protocol types | `crates/relay-protocol/src/{request,message,content,tool,response,stream,error}.rs` |
+| Catalog types | `crates/relay-catalog/src/lib.rs` |
 
 There are no other crates and no per-provider files; do not search for `anthropic.rs` or `providers/`. In a consumer project the source lives in Cargo's git checkout, `~/.cargo/git/checkouts/relay-foundation-*/<rev>/`.
 

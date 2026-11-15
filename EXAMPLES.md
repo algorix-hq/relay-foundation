@@ -1177,3 +1177,87 @@ assert_eq!(context.observed_at, 1235);
   {"situation":"Empty model page with next cursor","result":"ModelPage","client":"Normal list response"}
 ]
 ```
+
+# 5. Catalog (`relay-catalog`)
+
+## Loading and validating
+
+There is no top-level catalog object: the consumer chooses how to store and ship the four lists. Deserialization checks individual records (slug format and non-empty fields such as `upstream_slug` and `currency`); `validate` checks cross-record rules (unknown references and duplicates) and reports all issues.
+
+```rust
+use relay_catalog::{Issue, Lab, Model, Provider, ProviderModel, validate};
+
+let labs: Vec<Lab> = serde_json::from_str(r#"[
+    {"id": "anthropic", "name": "Anthropic"}
+]"#)?;
+let providers: Vec<Provider> = serde_json::from_str(r#"[
+    {"id": "bedrock", "name": "Amazon Bedrock"}
+]"#)?;
+let models: Vec<Model> = serde_json::from_str(r#"[
+    {"id": "claude-sonnet-4-5", "lab": "anthropic", "name": "Claude Sonnet 4.5",
+     "spec": {"context_window": 200000, "tool_call": true}}
+]"#)?;
+let provider_models: Vec<ProviderModel> = serde_json::from_str(r#"[
+    {"provider": "bedrock", "model": "claude-sonnet-4-5",
+     "upstream_slug": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+     "spec": {"context_window": 200000}}
+]"#)?;
+
+let issues: Vec<Issue> = validate(&labs, &providers, &models, &provider_models);
+for issue in &issues {
+    eprintln!("{issue}");
+}
+```
+
+## Choosing a provider model and sending it
+
+Using `request` from "Building a Request", find entries for a model slug and select the desired provider before passing the request to an adapter. Send the exact `upstream_slug`, not the catalog model slug, as `relay_protocol::Request.model`. `relay-catalog` does not depend on other relay crates; this link is consumer code.
+
+```rust
+use relay_catalog::{ProviderModel, Slug};
+
+let model_slug = Slug::new("claude-sonnet-4-5")?;
+let candidates: Vec<&ProviderModel> = provider_models.iter()
+    .filter(|provider_model| provider_model.model == model_slug)
+    .collect();
+for provider_model in &candidates {
+    println!("{}: {}", provider_model.provider.as_str(), provider_model.upstream_slug);
+}
+
+let provider_slug = Slug::new("bedrock")?;
+if let Some(provider_model) = candidates.into_iter()
+    .find(|provider_model| provider_model.provider == provider_slug)
+{
+    request.model = provider_model.upstream_slug.clone();
+}
+```
+
+## Reading spec and prices
+
+Display `Model.spec` alongside `ProviderModel.spec`; the former never fills in the latter. A missing spec field means "not verified" and must not by itself block a request. Missing prices likewise mean "not verified", not free.
+
+```rust
+use relay_catalog::{Model, Price, ProviderModel};
+
+fn display_price(price: &Price) -> f64 {
+    price.amount as f64 / 10_f64.powf(f64::from(price.scale))
+}
+
+fn display_model(model: &Model, provider_model: &ProviderModel) {
+    println!(
+        "Published context: {:?}; provider context: {:?}",
+        model.spec.as_ref().and_then(|spec| spec.context_window),
+        provider_model.spec.as_ref().and_then(|spec| spec.context_window),
+    );
+    if let Some(price) = provider_model.pricing.as_ref()
+        .and_then(|pricing| pricing.input.as_ref())
+    {
+        println!("Input: {} {} per 1M tokens", display_price(price), price.currency);
+    }
+}
+
+let price = Price { amount: 375, scale: 2, currency: "USD".into() };
+println!("{} {} per 1M tokens", display_price(&price), price.currency);
+```
+
+`Price` is `amount / 10^scale` in `currency` per 1M tokens (the example displays `3.75 USD`). The `f64` conversion is for display only; exact cost math is consumer code.

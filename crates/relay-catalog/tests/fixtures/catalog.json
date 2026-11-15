@@ -1,0 +1,113 @@
+{
+  "labs": [
+    { "id": "anthropic", "name": "Anthropic", "symbol": "https://catalog.example.com/symbols/labs/anthropic.svg" },
+    { "id": "openai", "name": "OpenAI", "symbol": "https://catalog.example.com/symbols/labs/openai.svg" },
+    { "id": "meta", "name": "Meta" }
+  ],
+  "providers": [
+    { "id": "anthropic", "name": "Anthropic", "symbol": "https://catalog.example.com/symbols/providers/anthropic.svg" },
+    { "id": "openai", "name": "OpenAI", "symbol": "https://catalog.example.com/symbols/providers/openai.svg" },
+    { "id": "bedrock", "name": "Amazon Bedrock", "symbol": "https://catalog.example.com/symbols/providers/bedrock.svg" },
+    { "id": "openrouter", "name": "OpenRouter", "symbol": "https://catalog.example.com/symbols/providers/openrouter.svg" },
+    { "id": "groq", "name": "Groq" }
+  ],
+  "models": [
+    {
+      "id": "claude-sonnet-4-5",
+      "lab": "anthropic",
+      "name": "Claude Sonnet 4.5",
+      "spec": {
+        "context_window": 200000,
+        "max_output_tokens": 64000,
+        "tool_call": true,
+        "reasoning": true,
+        "input_modalities": ["text", "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"]
+      }
+    },
+    { "id": "gpt-5", "lab": "openai", "name": "GPT-5" },
+    {
+      "id": "llama-3.3-70b",
+      "lab": "meta",
+      "name": "Llama 3.3 70B",
+      "spec": {
+        "context_window": 128000,
+        "tool_call": true,
+        "reasoning": false,
+        "input_modalities": ["text"]
+      }
+    }
+  ],
+  "provider_models": [
+    {
+      "provider": "anthropic",
+      "upstream_slug": "claude-sonnet-4-5",
+      "model": "claude-sonnet-4-5",
+      "spec": {
+        "context_window": 200000,
+        "max_output_tokens": 64000,
+        "tool_call": true,
+        "reasoning": true,
+        "input_modalities": ["text", "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"]
+      },
+      "pricing": {
+        "input": { "amount": 3, "scale": 0, "currency": "USD" },
+        "output": { "amount": 15, "scale": 0, "currency": "USD" },
+        "cache_read": { "amount": 3, "scale": 1, "currency": "USD" },
+        "cache_write": { "amount": 375, "scale": 2, "currency": "USD" }
+      }
+    },
+    {
+      "provider": "bedrock",
+      "upstream_slug": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "model": "claude-sonnet-4-5",
+      "spec": {
+        "context_window": 200000,
+        "max_output_tokens": 64000,
+        "tool_call": true,
+        "reasoning": true
+      }
+    },
+    {
+      "provider": "openrouter",
+      "upstream_slug": "anthropic/claude-sonnet-4.5",
+      "model": "claude-sonnet-4-5",
+      "pricing": {
+        "input": { "amount": 3, "scale": 0, "currency": "USD" },
+        "output": { "amount": 15, "scale": 0, "currency": "USD" }
+      }
+    },
+    {
+      "provider": "openai",
+      "upstream_slug": "gpt-5",
+      "model": "gpt-5",
+      "spec": {
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "tool_call": true,
+        "reasoning": true,
+        "input_modalities": ["text", "image/jpeg", "image/png", "image/gif", "image/webp"]
+      },
+      "pricing": {
+        "input": { "amount": 125, "scale": 2, "currency": "USD" },
+        "output": { "amount": 10, "scale": 0, "currency": "USD" },
+        "cache_read": { "amount": 125, "scale": 3, "currency": "USD" }
+      }
+    },
+    {
+      "provider": "groq",
+      "upstream_slug": "llama-3.3-70b-versatile",
+      "model": "llama-3.3-70b",
+      "spec": {
+        "context_window": 131072,
+        "max_output_tokens": 32768,
+        "tool_call": true,
+        "reasoning": false,
+        "input_modalities": ["text"]
+      },
+      "pricing": {
+        "input": { "amount": 59, "scale": 2, "currency": "USD" },
+        "output": { "amount": 79, "scale": 2, "currency": "USD" }
+      }
+    }
+  ]
+}
