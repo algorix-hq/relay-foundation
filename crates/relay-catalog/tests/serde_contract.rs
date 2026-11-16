@@ -1,4 +1,7 @@
-use relay_catalog::{Lab, Model, Price, Pricing, Provider, ProviderModel, Slug, Spec, validate};
+use relay_catalog::{
+    Lab, Model, Price, Pricing, Provider, ProviderModel, Reasoning, ReasoningSpec, Slug, Spec,
+    validate,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
@@ -234,4 +237,62 @@ fn prices_reject_negative_amounts_and_scales_without_limiting_unsigned_values() 
     let value = json!({"amount": u64::MAX, "scale": u32::MAX, "currency": "USD"});
     let price: Price = serde_json::from_value(value.clone()).expect("unsigned bounds are valid");
     assert_eq!(serde_json::to_value(price).expect("serialize price"), value);
+}
+
+#[test]
+fn reasoning_is_false_when_unsupported_and_an_object_when_supported() {
+    for value in [
+        json!(false),
+        json!({}),
+        json!({
+            "effort": {"levels": ["low", "high"], "default_level": "low"},
+            "budget": {"min": 0, "max": 1024},
+            "display": ["full", "summarized", "omitted"]
+        }),
+        json!({"effort": {"levels": ["low"]}}),
+    ] {
+        let reasoning: Reasoning =
+            serde_json::from_value(value.clone()).expect("valid reasoning value");
+        assert_eq!(
+            serde_json::to_value(reasoning).expect("serialize reasoning"),
+            value
+        );
+    }
+    assert_eq!(
+        serde_json::from_value::<Reasoning>(json!(false)).expect("false is unsupported"),
+        Reasoning::Unsupported
+    );
+    assert_eq!(
+        serde_json::from_value::<Reasoning>(json!({})).expect("empty object is supported"),
+        Reasoning::Supported(ReasoningSpec::default())
+    );
+}
+
+#[test]
+fn reasoning_rejects_true_unknown_display_values_and_effort_without_levels() {
+    for value in [
+        json!(true),
+        json!({"display": ["verbose"]}),
+        json!({"effort": {"default_level": "low"}}),
+        json!({"budget": {"min": 1}}),
+    ] {
+        assert!(
+            serde_json::from_value::<Reasoning>(value.clone()).is_err(),
+            "accepted {value}"
+        );
+    }
+}
+
+#[test]
+fn reasoning_ignores_unknown_fields() {
+    let reasoning: Reasoning = serde_json::from_value(json!({
+        "future": 1,
+        "effort": {"levels": ["low"], "future": true},
+        "budget": {"min": 1, "max": 2, "future": null}
+    }))
+    .expect("unknown reasoning fields are accepted");
+    assert_eq!(
+        serde_json::to_value(reasoning).expect("serialize reasoning"),
+        json!({"effort": {"levels": ["low"]}, "budget": {"min": 1, "max": 2}})
+    );
 }

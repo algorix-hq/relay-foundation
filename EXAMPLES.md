@@ -1182,7 +1182,7 @@ assert_eq!(context.observed_at, 1235);
 
 ## Loading and validating
 
-There is no top-level catalog object: the consumer chooses how to store and ship the four lists. Deserialization checks individual records (slug format and non-empty fields such as `upstream_slug` and `currency`); `validate` checks cross-record rules (unknown references and duplicates) and reports all issues.
+There is no top-level catalog object: the consumer chooses how to store and ship the four lists. Deserialization checks individual records (slug format and non-empty fields such as `upstream_slug` and `currency`); `validate` checks cross-record rules (unknown references and duplicates) and reasoning spec consistency, and reports all issues.
 
 ```rust
 use relay_catalog::{Issue, Lab, Model, Provider, ProviderModel, validate};
@@ -1261,3 +1261,34 @@ println!("{} {} per 1M tokens", display_price(&price), price.currency);
 ```
 
 `Price` is `amount / 10^scale` in `currency` per 1M tokens (the example displays `3.75 USD`). The `f64` conversion is for display only; exact cost math is consumer code.
+
+## Reasoning spec
+
+`spec.reasoning` is `false` when the model is verified not to reason, and an object when it does; a missing field means "not verified". `true` is rejected; use `{}` for "supported, no details". Effort levels are open strings, while `display` accepts only `full`, `summarized`, and `omitted`.
+
+```json
+"reasoning": {
+  "effort": {"levels": ["low", "medium", "high"], "default_level": "medium"},
+  "budget": {"min": 1024, "max": 32000},
+  "display": ["full", "summarized"]
+}
+```
+
+`validate` reports `EmptyEffortLevels`, `DuplicateEffortLevel`, `UnknownDefaultEffortLevel` (`default_level` outside `levels`), and `InvertedReasoningBudget` (`min > max`), each naming the record through `SpecRecord`. Checking a request's effort against these levels is consumer code; bridges never read the catalog.
+
+```rust
+use relay_catalog::{ProviderModel, Reasoning};
+use relay_protocol::ReasoningEffort;
+
+fn effort_is_listed(provider_model: &ProviderModel, effort: &ReasoningEffort) -> Option<bool> {
+    match provider_model.spec.as_ref()?.reasoning.as_ref()? {
+        Reasoning::Unsupported => Some(false),
+        Reasoning::Supported(spec) => {
+            let levels = &spec.effort.as_ref()?.levels;
+            Some(levels.contains(&effort.0))
+        }
+    }
+}
+```
+
+`None` means "not verified" and must not by itself block the request.

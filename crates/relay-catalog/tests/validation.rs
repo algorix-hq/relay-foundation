@@ -1,4 +1,4 @@
-use relay_catalog::{Issue, Lab, Model, Provider, ProviderModel, Slug, validate};
+use relay_catalog::{Issue, Lab, Model, Provider, ProviderModel, Slug, SpecRecord, validate};
 use serde_json::json;
 
 fn slug(value: &str) -> Slug {
@@ -117,4 +117,61 @@ fn lab_and_provider_namespaces_and_both_provider_model_key_parts_are_independent
     ]))
     .expect("valid provider model records");
     assert!(validate(&labs, &providers, &models, &provider_models).is_empty());
+}
+
+#[test]
+fn reasoning_spec_issues_name_the_record_after_its_reference_issues() {
+    let labs: Vec<Lab> =
+        serde_json::from_value(json!([{"id": "lab", "name": "Lab"}])).expect("valid labs");
+    let providers: Vec<Provider> =
+        serde_json::from_value(json!([{"id": "provider", "name": "Provider"}]))
+            .expect("valid providers");
+    let models: Vec<Model> = serde_json::from_value(json!([
+        {"id": "model", "lab": "missing-lab", "name": "Model",
+         "spec": {"reasoning": {"effort": {"levels": []}}}}
+    ]))
+    .expect("valid model records");
+    let provider_models: Vec<ProviderModel> = serde_json::from_value(json!([
+        {"provider": "provider", "upstream_slug": "Model:0", "model": "model",
+         "spec": {"reasoning": {
+             "effort": {"levels": ["low", "high", "low"], "default_level": "medium"},
+             "budget": {"min": 2048, "max": 1024}
+         }}},
+        {"provider": "provider", "upstream_slug": "Model:1", "model": "model",
+         "spec": {"reasoning": {
+             "effort": {"levels": ["low"], "default_level": "low"},
+             "budget": {"min": 1024, "max": 1024}
+         }}}
+    ]))
+    .expect("valid provider model records");
+    let provider_model = SpecRecord::ProviderModel {
+        provider: slug("provider"),
+        upstream_slug: "Model:0".into(),
+    };
+
+    assert_eq!(
+        validate(&labs, &providers, &models, &provider_models),
+        vec![
+            Issue::UnknownLab {
+                model: slug("model"),
+                lab: slug("missing-lab"),
+            },
+            Issue::EmptyEffortLevels {
+                record: SpecRecord::Model { id: slug("model") },
+            },
+            Issue::DuplicateEffortLevel {
+                record: provider_model.clone(),
+                level: "low".into(),
+            },
+            Issue::UnknownDefaultEffortLevel {
+                record: provider_model.clone(),
+                level: "medium".into(),
+            },
+            Issue::InvertedReasoningBudget {
+                record: provider_model,
+                min: 2048,
+                max: 1024,
+            },
+        ]
+    );
 }

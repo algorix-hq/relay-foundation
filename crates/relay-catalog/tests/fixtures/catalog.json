@@ -20,7 +20,7 @@
         "context_window": 200000,
         "max_output_tokens": 64000,
         "tool_call": true,
-        "reasoning": true,
+        "reasoning": { "budget": { "min": 1024, "max": 64000 }, "display": ["summarized", "omitted"] },
         "input_modalities": ["text", "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"]
       }
     },
@@ -46,7 +46,7 @@
         "context_window": 200000,
         "max_output_tokens": 64000,
         "tool_call": true,
-        "reasoning": true,
+        "reasoning": { "budget": { "min": 1024, "max": 64000 }, "display": ["summarized", "omitted"] },
         "input_modalities": ["text", "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"]
       },
       "pricing": {
@@ -64,7 +64,7 @@
         "context_window": 200000,
         "max_output_tokens": 64000,
         "tool_call": true,
-        "reasoning": true
+        "reasoning": {}
       }
     },
     {
@@ -84,7 +84,7 @@
         "context_window": 400000,
         "max_output_tokens": 128000,
         "tool_call": true,
-        "reasoning": true,
+        "reasoning": { "effort": { "levels": ["minimal", "low", "medium", "high"], "default_level": "medium" }, "display": ["summarized"] },
         "input_modalities": ["text", "image/jpeg", "image/png", "image/gif", "image/webp"]
       },
       "pricing": {
