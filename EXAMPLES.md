@@ -1182,16 +1182,17 @@ assert_eq!(context.observed_at, 1235);
 
 ## Loading and validating
 
-There is no top-level catalog object: the consumer chooses how to store and ship the four lists. Deserialization checks individual records (slug format and non-empty fields such as `upstream_slug` and `currency`); `validate` checks cross-record rules (unknown references and duplicates) and reasoning spec consistency, and reports all issues.
+There is no top-level catalog object: the consumer chooses how to store and ship the five lists. Deserialization checks individual records (slug format and non-empty fields such as `upstream_slug`, API format strings, and `currency`); `validate` checks cross-record rules (unknown references and duplicates), provider API formats, and reasoning spec consistency, and reports all issues.
 
 ```rust
-use relay_catalog::{Issue, Lab, Model, Provider, ProviderModel, validate};
+use relay_catalog::{Issue, Lab, Model, Provider, ProviderModel, ProviderModelAlias, validate};
 
 let labs: Vec<Lab> = serde_json::from_str(r#"[
     {"id": "anthropic", "name": "Anthropic"}
 ]"#)?;
 let providers: Vec<Provider> = serde_json::from_str(r#"[
-    {"id": "bedrock", "name": "Amazon Bedrock"}
+    {"id": "bedrock", "name": "Amazon Bedrock", "auth": "byok", "api_formats": ["messages"]},
+    {"id": "openrouter", "name": "OpenRouter", "auth": "byok", "api_formats": ["chat-completions"]}
 ]"#)?;
 let models: Vec<Model> = serde_json::from_str(r#"[
     {"id": "claude-sonnet-4-5", "lab": "anthropic", "name": "Claude Sonnet 4.5",
@@ -1202,12 +1203,21 @@ let provider_models: Vec<ProviderModel> = serde_json::from_str(r#"[
      "upstream_slug": "anthropic.claude-sonnet-4-5-20250929-v1:0",
      "spec": {"context_window": 200000}}
 ]"#)?;
+let provider_model_aliases: Vec<ProviderModelAlias> = serde_json::from_str(r#"[
+    {"provider": "openrouter", "upstream_slug": "openrouter/auto", "name": "Auto"}
+]"#)?;
 
-let issues: Vec<Issue> = validate(&labs, &providers, &models, &provider_models);
+let issues: Vec<Issue> = validate(
+    &labs, &providers, &models, &provider_models, &provider_model_aliases,
+);
 for issue in &issues {
     eprintln!("{issue}");
 }
 ```
+
+Use `Provider.auth` (`Auth::Byok` or `Auth::Subscription`, serialized as `"byok"` or `"subscription"`) to filter providers the user has credentials for. API-key and subscription offerings are separate providers, such as `openai` and `chatgpt`, because their endpoints, models, and pricing differ.
+
+`api_formats` lists wire-format strings such as `"chat-completions"`, `"responses"`, and `"messages"`; custom strings are allowed. `validate` reports `EmptyApiFormats` and `DuplicateApiFormat`. Aliases share the `(provider, upstream_slug)` key with provider models and reuse `UnknownProvider` and `DuplicateProviderModel`; their targets are checked with `UnknownAliasModel` and `DuplicateAliasModel`.
 
 ## Choosing a provider model and sending it
 
@@ -1232,9 +1242,38 @@ if let Some(provider_model) = candidates.into_iter()
 }
 ```
 
+`ProviderModel` always links a canonical `Model`. `ProviderModelAlias` represents a provider-defined combo or router without that link, so it does not appear in the canonical-model search above. Display `alias.name` and send `alias.upstream_slug` as `Request.model`. Optional `alias.models` lists possible routing targets, not the model that served a request; omitted means undisclosed, and `[]` is rejected.
+
+## Selecting a provider bridge
+
+`relay-catalog` does not depend on `relay-bridge`. In consumer code, turn the provider's strings into `ApiFormat` values and compare them with `bridge.format()` before attaching the bridge to an adapter. Supply the endpoint and credentials separately.
+
+```rust
+use std::sync::Arc;
+use relay_adapter::OpenAiCompatibleAdapter;
+use relay_bridge::{ApiFormat, Bridge, ResponsesBridge};
+use relay_catalog::Provider;
+use relay_protocol::ConfigurationError;
+
+fn responses_adapter(
+    provider: &Provider, endpoint: &str, api_key: &str,
+) -> Result<OpenAiCompatibleAdapter, ConfigurationError> {
+    let bridge = ResponsesBridge::new();
+    let formats: Vec<ApiFormat> = provider.api_formats.iter()
+        .map(|format| ApiFormat::new(format.clone()))
+        .collect::<Result<_, _>>()?;
+    if !formats.contains(bridge.format()) {
+        return Err(ConfigurationError { message: "provider does not list responses".into() });
+    }
+    OpenAiCompatibleAdapter::new(endpoint)
+        .api_key(api_key)
+        .with_bridge(Arc::new(bridge))
+}
+```
+
 ## Reading spec and prices
 
-Display `Model.spec` alongside `ProviderModel.spec`; the former never fills in the latter. A missing spec field means "not verified" and must not by itself block a request. Missing prices likewise mean "not verified", not free.
+Display `Model.spec` alongside `ProviderModel.spec`; the former never fills in the latter. Aliases have their own optional `spec` and `pricing`. A missing spec field means "not verified" and must not by itself block a request. Subscription providers normally have no pricing; missing prices mean "not verified", not free.
 
 ```rust
 use relay_catalog::{Model, Price, ProviderModel};
@@ -1274,7 +1313,7 @@ println!("{} {} per 1M tokens", display_price(&price), price.currency);
 }
 ```
 
-`validate` reports `EmptyEffortLevels`, `DuplicateEffortLevel`, `UnknownDefaultEffortLevel` (`default_level` outside `levels`), and `InvertedReasoningBudget` (`min > max`), each naming the record through `SpecRecord`. Checking a request's effort against these levels is consumer code; bridges never read the catalog.
+`validate` reports `EmptyEffortLevels`, `DuplicateEffortLevel`, `UnknownDefaultEffortLevel` (`default_level` outside `levels`), and `InvertedReasoningBudget` (`min > max`), each naming the record through `SpecRecord`, including `SpecRecord::ProviderModelAlias { provider, upstream_slug }`. Checking a request's effort against these levels is consumer code; bridges never read the catalog.
 
 ```rust
 use relay_catalog::{ProviderModel, Reasoning};

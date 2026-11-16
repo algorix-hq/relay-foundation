@@ -5,11 +5,12 @@
     { "id": "meta", "name": "Meta" }
   ],
   "providers": [
-    { "id": "anthropic", "name": "Anthropic", "symbol": "https://catalog.example.com/symbols/providers/anthropic.svg" },
-    { "id": "openai", "name": "OpenAI", "symbol": "https://catalog.example.com/symbols/providers/openai.svg" },
-    { "id": "bedrock", "name": "Amazon Bedrock", "symbol": "https://catalog.example.com/symbols/providers/bedrock.svg" },
-    { "id": "openrouter", "name": "OpenRouter", "symbol": "https://catalog.example.com/symbols/providers/openrouter.svg" },
-    { "id": "groq", "name": "Groq" }
+    { "id": "anthropic", "name": "Anthropic", "symbol": "https://catalog.example.com/symbols/providers/anthropic.svg", "auth": "byok", "api_formats": ["messages"] },
+    { "id": "openai", "name": "OpenAI", "symbol": "https://catalog.example.com/symbols/providers/openai.svg", "auth": "byok", "api_formats": ["chat-completions", "responses"] },
+    { "id": "bedrock", "name": "Amazon Bedrock", "symbol": "https://catalog.example.com/symbols/providers/bedrock.svg", "auth": "byok", "api_formats": ["messages"] },
+    { "id": "openrouter", "name": "OpenRouter", "symbol": "https://catalog.example.com/symbols/providers/openrouter.svg", "auth": "byok", "api_formats": ["chat-completions", "responses"] },
+    { "id": "groq", "name": "Groq", "auth": "byok", "api_formats": ["chat-completions", "responses"] },
+    { "id": "chatgpt", "name": "ChatGPT", "auth": "subscription", "api_formats": ["responses"] }
   ],
   "models": [
     {
@@ -94,6 +95,18 @@
       }
     },
     {
+      "provider": "chatgpt",
+      "upstream_slug": "gpt-5",
+      "model": "gpt-5",
+      "spec": {
+        "context_window": 400000,
+        "max_output_tokens": 128000,
+        "tool_call": true,
+        "reasoning": { "effort": { "levels": ["minimal", "low", "medium", "high"], "default_level": "medium" }, "display": ["summarized"] },
+        "input_modalities": ["text", "image/jpeg", "image/png", "image/gif", "image/webp"]
+      }
+    },
+    {
       "provider": "groq",
       "upstream_slug": "llama-3.3-70b-versatile",
       "model": "llama-3.3-70b",
@@ -109,5 +122,9 @@
         "output": { "amount": 79, "scale": 2, "currency": "USD" }
       }
     }
+  ],
+  "provider_model_aliases": [
+    { "provider": "openrouter", "upstream_slug": "openrouter/auto", "name": "Auto Router" },
+    { "provider": "chatgpt", "upstream_slug": "auto", "name": "Auto", "models": ["gpt-5"] }
   ]
 }

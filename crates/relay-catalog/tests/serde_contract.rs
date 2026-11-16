@@ -1,6 +1,6 @@
 use relay_catalog::{
-    Lab, Model, Price, Pricing, Provider, ProviderModel, Reasoning, ReasoningSpec, Slug, Spec,
-    validate,
+    Lab, Model, Price, Pricing, Provider, ProviderModel, ProviderModelAlias, Reasoning,
+    ReasoningSpec, Slug, Spec, validate,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -13,21 +13,24 @@ fn agreed_examples_validate_and_round_trip_without_losing_fields() {
         providers: Vec<Provider>,
         models: Vec<Model>,
         provider_models: Vec<ProviderModel>,
+        provider_model_aliases: Vec<ProviderModelAlias>,
     }
 
     let fixture: Value =
         serde_json::from_str(include_str!("fixtures/catalog.json")).expect("valid fixture JSON");
     let catalog: Catalog = serde_json::from_value(fixture.clone()).expect("valid example catalog");
     assert_eq!(catalog.labs.len(), 3);
-    assert_eq!(catalog.providers.len(), 5);
+    assert_eq!(catalog.providers.len(), 6);
     assert_eq!(catalog.models.len(), 3);
-    assert_eq!(catalog.provider_models.len(), 5);
+    assert_eq!(catalog.provider_models.len(), 6);
+    assert_eq!(catalog.provider_model_aliases.len(), 2);
     assert!(
         validate(
             &catalog.labs,
             &catalog.providers,
             &catalog.models,
             &catalog.provider_models,
+            &catalog.provider_model_aliases,
         )
         .is_empty()
     );
@@ -51,12 +54,16 @@ fn unknown_fields_are_ignored_in_every_record_and_nested_object() {
     );
 
     let provider: Provider = serde_json::from_value(json!({
-        "id": "provider", "name": "Provider", "future": [1, 2]
+        "id": "provider", "name": "Provider", "auth": "byok",
+        "api_formats": ["messages"], "future": [1, 2]
     }))
     .expect("unknown provider field is accepted");
     assert_eq!(
         serde_json::to_value(provider).expect("serialize provider"),
-        json!({"id": "provider", "name": "Provider"})
+        json!({
+            "id": "provider", "name": "Provider", "auth": "byok",
+            "api_formats": ["messages"]
+        })
     );
 
     let model: Model = serde_json::from_value(json!({
@@ -90,6 +97,19 @@ fn unknown_fields_are_ignored_in_every_record_and_nested_object() {
             "pricing": {"input": {"amount": 375, "scale": 2, "currency": "USD"}}
         })
     );
+
+    let alias: ProviderModelAlias = serde_json::from_value(json!({
+        "provider": "provider", "upstream_slug": "auto", "name": "Auto",
+        "models": ["model"], "future": {"nested": true}
+    }))
+    .expect("unknown provider model alias field is accepted");
+    assert_eq!(
+        serde_json::to_value(alias).expect("serialize provider model alias"),
+        json!({
+            "provider": "provider", "upstream_slug": "auto", "name": "Auto",
+            "models": ["model"]
+        })
+    );
 }
 
 fn assert_missing_fields<T: DeserializeOwned + Serialize>(input: Value, paths: &[&str]) {
@@ -111,7 +131,13 @@ fn assert_missing_fields<T: DeserializeOwned + Serialize>(input: Value, paths: &
 #[test]
 fn missing_or_null_optional_fields_remain_none_and_are_omitted() {
     assert_missing_fields::<Lab>(json!({"id": "lab", "name": "Lab"}), &["symbol"]);
-    assert_missing_fields::<Provider>(json!({"id": "provider", "name": "Provider"}), &["symbol"]);
+    assert_missing_fields::<Provider>(
+        json!({
+            "id": "provider", "name": "Provider", "auth": "byok",
+            "api_formats": ["messages"]
+        }),
+        &["symbol"],
+    );
     assert_missing_fields::<Model>(
         json!({"id": "model", "lab": "lab", "name": "Model"}),
         &["spec"],
@@ -119,6 +145,10 @@ fn missing_or_null_optional_fields_remain_none_and_are_omitted() {
     assert_missing_fields::<ProviderModel>(
         json!({"provider": "provider", "upstream_slug": "Model", "model": "model"}),
         &["spec", "pricing"],
+    );
+    assert_missing_fields::<ProviderModelAlias>(
+        json!({"provider": "provider", "upstream_slug": "auto", "name": "Auto"}),
+        &["models", "spec", "pricing"],
     );
     assert_missing_fields::<Spec>(
         json!({}),
@@ -210,12 +240,60 @@ fn upstream_model_identifiers_are_nonempty_but_not_relay_slugs() {
         serde_json::to_value(provider_model).expect("serialize upstream identifier"),
         value
     );
+    assert!(
+        serde_json::from_value::<ProviderModelAlias>(json!({
+            "provider": "provider", "upstream_slug": "", "name": "Auto"
+        }))
+        .is_err()
+    );
+    let value = json!({
+        "provider": "provider", "upstream_slug": "Lab.Model/Auto:0", "name": "Auto"
+    });
+    let alias: ProviderModelAlias =
+        serde_json::from_value(value.clone()).expect("alias identifier is not a Relay slug");
+    assert_eq!(
+        serde_json::to_value(alias).expect("serialize alias identifier"),
+        value
+    );
+}
+
+#[test]
+fn providers_require_auth_and_api_formats_and_reject_unknown_auth_or_empty_formats() {
+    for value in [
+        json!({"id": "provider", "name": "Provider", "api_formats": ["messages"]}),
+        json!({"id": "provider", "name": "Provider", "auth": "byok"}),
+        json!({
+            "id": "provider", "name": "Provider", "auth": "unknown",
+            "api_formats": ["messages"]
+        }),
+        json!({
+            "id": "provider", "name": "Provider", "auth": "byok",
+            "api_formats": ["messages", ""]
+        }),
+    ] {
+        assert!(
+            serde_json::from_value::<Provider>(value.clone()).is_err(),
+            "accepted {value}"
+        );
+    }
+}
+
+#[test]
+fn disclosed_alias_models_must_not_be_empty() {
+    assert!(
+        serde_json::from_value::<ProviderModelAlias>(json!({
+            "provider": "provider", "upstream_slug": "auto", "name": "Auto", "models": []
+        }))
+        .is_err()
+    );
 }
 
 #[test]
 fn present_symbols_must_not_be_empty() {
-    let record = json!({"id": "entity", "name": "Entity", "symbol": ""});
+    let mut record = json!({"id": "entity", "name": "Entity", "symbol": ""});
     assert!(serde_json::from_value::<Lab>(record.clone()).is_err());
+    record["auth"] = json!("byok");
+    record["api_formats"] = json!(["messages"]);
     assert!(serde_json::from_value::<Provider>(record).is_err());
 }
 

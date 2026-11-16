@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, fmt};
 
-use crate::{Lab, Model, Provider, ProviderModel, Reasoning, Slug, Spec};
+use crate::{Lab, Model, Provider, ProviderModel, ProviderModelAlias, Reasoning, Slug, Spec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -47,6 +47,23 @@ pub enum Issue {
         min: u64,
         max: u64,
     },
+    EmptyApiFormats {
+        provider: Slug,
+    },
+    DuplicateApiFormat {
+        provider: Slug,
+        api_format: String,
+    },
+    UnknownAliasModel {
+        provider: Slug,
+        upstream_slug: String,
+        model: Slug,
+    },
+    DuplicateAliasModel {
+        provider: Slug,
+        upstream_slug: String,
+        model: Slug,
+    },
 }
 
 /// The record whose spec an issue refers to.
@@ -56,6 +73,10 @@ pub enum SpecRecord {
         id: Slug,
     },
     ProviderModel {
+        provider: Slug,
+        upstream_slug: String,
+    },
+    ProviderModelAlias {
         provider: Slug,
         upstream_slug: String,
     },
@@ -69,6 +90,13 @@ impl fmt::Display for SpecRecord {
                 provider,
                 upstream_slug,
             } => write!(formatter, "provider model ({provider}, {upstream_slug})"),
+            Self::ProviderModelAlias {
+                provider,
+                upstream_slug,
+            } => write!(
+                formatter,
+                "provider model alias ({provider}, {upstream_slug})"
+            ),
         }
     }
 }
@@ -118,17 +146,44 @@ impl fmt::Display for Issue {
                 formatter,
                 "{record} has reasoning budget min {min} above max {max}"
             ),
+            Self::EmptyApiFormats { provider } => {
+                write!(formatter, "provider {provider} lists no api formats")
+            }
+            Self::DuplicateApiFormat {
+                provider,
+                api_format,
+            } => write!(
+                formatter,
+                "provider {provider} repeats api format {api_format}"
+            ),
+            Self::UnknownAliasModel {
+                provider,
+                upstream_slug,
+                model,
+            } => write!(
+                formatter,
+                "provider model alias ({provider}, {upstream_slug}) references unknown model {model}"
+            ),
+            Self::DuplicateAliasModel {
+                provider,
+                upstream_slug,
+                model,
+            } => write!(
+                formatter,
+                "provider model alias ({provider}, {upstream_slug}) repeats model {model}"
+            ),
         }
     }
 }
 
-/// Reports all issues in list and input order; per record, duplicates come first, then
-/// references, then spec issues.
+/// Reports all issues in list and input order; per record, key duplicates come first,
+/// followed by format, reference, and spec issues.
 pub fn validate(
     labs: &[Lab],
     providers: &[Provider],
     models: &[Model],
     provider_models: &[ProviderModel],
+    provider_model_aliases: &[ProviderModelAlias],
 ) -> Vec<Issue> {
     let mut issues = Vec::new();
     let mut lab_ids = BTreeSet::new();
@@ -144,6 +199,20 @@ pub fn validate(
             issues.push(Issue::DuplicateProvider {
                 id: provider.id.clone(),
             });
+        }
+        if provider.api_formats.is_empty() {
+            issues.push(Issue::EmptyApiFormats {
+                provider: provider.id.clone(),
+            });
+        }
+        let mut api_formats = BTreeSet::new();
+        for api_format in &provider.api_formats {
+            if !api_formats.insert(api_format.as_str()) {
+                issues.push(Issue::DuplicateApiFormat {
+                    provider: provider.id.clone(),
+                    api_format: api_format.clone(),
+                });
+            }
         }
     }
 
@@ -201,6 +270,48 @@ pub fn validate(
                 || SpecRecord::ProviderModel {
                     provider: provider_model.provider.clone(),
                     upstream_slug: provider_model.upstream_slug.clone(),
+                },
+                &mut issues,
+            );
+        }
+    }
+    for alias in provider_model_aliases {
+        if !provider_model_keys.insert((alias.provider.as_str(), alias.upstream_slug.as_str())) {
+            issues.push(Issue::DuplicateProviderModel {
+                provider: alias.provider.clone(),
+                upstream_slug: alias.upstream_slug.clone(),
+            });
+        }
+        if !provider_ids.contains(alias.provider.as_str()) {
+            issues.push(Issue::UnknownProvider {
+                provider: alias.provider.clone(),
+                upstream_slug: alias.upstream_slug.clone(),
+            });
+        }
+        if let Some(models) = &alias.models {
+            let mut alias_models = BTreeSet::new();
+            for model in models {
+                if !alias_models.insert(model.as_str()) {
+                    issues.push(Issue::DuplicateAliasModel {
+                        provider: alias.provider.clone(),
+                        upstream_slug: alias.upstream_slug.clone(),
+                        model: model.clone(),
+                    });
+                } else if !model_ids.contains(model.as_str()) {
+                    issues.push(Issue::UnknownAliasModel {
+                        provider: alias.provider.clone(),
+                        upstream_slug: alias.upstream_slug.clone(),
+                        model: model.clone(),
+                    });
+                }
+            }
+        }
+        if let Some(spec) = &alias.spec {
+            validate_spec(
+                spec,
+                || SpecRecord::ProviderModelAlias {
+                    provider: alias.provider.clone(),
+                    upstream_slug: alias.upstream_slug.clone(),
                 },
                 &mut issues,
             );
