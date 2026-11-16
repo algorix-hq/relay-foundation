@@ -3,16 +3,16 @@ members = ["crates/relay-protocol", "crates/relay-bridge", "crates/relay-adapter
 resolver = "3"
 
 [workspace.package]
-version = "1.0.0-alpha.2"
+version = "0.0.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/algorix-hq/relay-foundation"
 
 [workspace.dependencies]
-relay-protocol = { path = "crates/relay-protocol", version = "1.0.0-alpha.2" }
-relay-bridge = { path = "crates/relay-bridge", version = "1.0.0-alpha.2" }
-relay-adapter = { path = "crates/relay-adapter", version = "1.0.0-alpha.2" }
-relay-catalog = { path = "crates/relay-catalog", version = "1.0.0-alpha.2" }
+relay-protocol = { path = "crates/relay-protocol", version = "0.0.0" }
+relay-bridge = { path = "crates/relay-bridge", version = "0.0.0" }
+relay-adapter = { path = "crates/relay-adapter", version = "0.0.0" }
+relay-catalog = { path = "crates/relay-catalog", version = "0.0.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }

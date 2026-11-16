@@ -110,7 +110,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "relay-adapter"
-version = "1.0.0-alpha.2"
+version = "0.0.0"
 dependencies = [
  "relay-bridge",
  "relay-protocol",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "relay-bridge"
-version = "1.0.0-alpha.2"
+version = "0.0.0"
 dependencies = [
  "relay-protocol",
  "serde_json",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "relay-catalog"
-version = "1.0.0-alpha.2"
+version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "relay-protocol"
-version = "1.0.0-alpha.2"
+version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",

@@ -26,7 +26,7 @@ client frames ◀ Transcoder (adapter.open_stream + client stream encoder) ◀ p
 
 These come from the library's design. Code that breaks them usually compiles but behaves wrong.
 
-1. **Pin a `v1` or later tag.** Depend through git with `tag = "v1.0.0-alpha.2"` or later. Never use a branch, `rev` on an untagged commit, crates.io, or a `v0.x` tag (those are the old, incompatible implementation). All `relay-*` crates must use the same tag. See `references/dependency.md`.
+1. **Pin a commit with `rev`.** Depend through git with `rev = "<commit>"`. Never use a branch, a tag, or crates.io. All `relay-*` crates must use the same `rev`. See `references/dependency.md`.
 2. **Only the adapter classifies provider errors.** Never inspect a provider body yourself to decide whether it is an error, and never map HTTP status codes to error categories in consumer code. Pass status, headers, and body to `parse_response`, `open_stream` / `RejectedResponse::classify`, or `parse_models`. Bridges have no provider error variant by design.
 3. **Conversion is strict by default.** Anything the target format cannot express returns `ConversionError` (`Unrepresentable`, `Invalid`, or `Unsupported`). Do not pre-strip fields to make conversion succeed. If dropping is acceptable, allow it explicitly with `LossScope` and log or return every `ConversionLoss` you get back. See `references/errors.md`.
 4. **Keep the decoded client `Request`.** `encode_response` and the stream encoder need the same `Request` the client bridge decoded at ingress.
@@ -49,9 +49,9 @@ Read only what the task needs. The references give exact type names, method sign
 | Map errors to client responses, allow or report losses, know what a format cannot express | `references/errors.md` |
 | Support a provider that is not built in | `references/custom-adapter.md` |
 
-Open Relay's source or `EXAMPLES.md` only when one of these happens:
+Open Relay's source only when one of these happens:
 
-- `cargo check` reports a name or signature that differs from the references (the pinned tag may be newer);
+- `cargo check` reports a name or signature that differs from the references (the pinned rev may be newer);
 - the task depends on a behavior the references do not describe.
 
 When you do, go straight to the file that owns the item instead of browsing:
