@@ -4,7 +4,7 @@ The adapters under `relay_adapter::providers` cover the providers relay-foundati
 
 ## Decide the bridge first
 
-- If the provider speaks Chat Completions, Responses, or Messages on the wire, reuse that built-in bridge. Then check whether `OpenAiCompatibleAdapter` already fits; if so, no custom adapter is needed.
+- If the provider speaks Chat Completions, Responses, or Messages on the wire, reuse that built-in bridge. Then check whether `OpenAiCompatibleAdapter` already fits (Chat Completions with `max_tokens` only); if so, no custom adapter is needed. Otherwise pass the configured bridge to `BaseAdapter::new`.
 - If the provider has its own wire format, implement `relay_bridge::Bridge` for it as well, with an `ApiFormat::new("your-format")?` identifier. Implement `StreamDecoder` and `StreamEncoder` for streaming. The bridge must stay strict: return `BridgeError::Conversion` for unrepresentable input and push a `ConversionLoss` for every allowed drop. A bridge never detects provider errors.
 
 ## Start with `BaseAdapter`
@@ -96,7 +96,7 @@ Built-in adapters look for an error payload in any of these shapes, in a 2xx or 
 ```rust
 use std::sync::Arc;
 use relay_adapter::{Adapter, Conversion, FrameDecoder, FrameItem, Headers, Method, ProviderRequest, SseDecoder};
-use relay_bridge::{ApiFormat, Bridge, ConversionOptions, Frame};
+use relay_bridge::{Bridge, ConversionOptions, Frame};
 use relay_protocol::{ConfigurationError, DecodeError, ProviderError, ProviderErrorCategory, RetryAfter};
 use serde_json::Value;
 
@@ -107,12 +107,9 @@ pub struct KiroAdapter {
 }
 
 impl KiroAdapter {
-    pub fn new(bridge: Arc<dyn Bridge>, url: String, token: String, options: ConversionOptions)
-        -> Result<Self, ConfigurationError>
-    {
-        // List every format this endpoint accepts; Conversion::new rejects other bridges.
-        let conversion = Conversion::new(bridge, &[ApiFormat::CHAT_COMPLETIONS], options)?;
-        Ok(Self { conversion, url, token })
+    pub fn new(bridge: Arc<dyn Bridge>, url: String, token: String, options: ConversionOptions) -> Self {
+        let conversion = Conversion::new(bridge, options);
+        Self { conversion, url, token }
     }
 }
 

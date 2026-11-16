@@ -2,9 +2,7 @@ mod models;
 
 use std::sync::Arc;
 
-use relay_bridge::{
-    ApiFormat, Bridge, ChatCompletionsBridge, LossScope, chat_completions::MaxTokensField,
-};
+use relay_bridge::{ChatCompletionsBridge, LossScope, chat_completions::MaxTokensField};
 use relay_protocol::{ConfigurationError, ProviderError, Request};
 use serde_json::Value;
 
@@ -14,9 +12,9 @@ use crate::{
     ProviderRequest,
 };
 
-/// `new` takes the full request URL. Defaults to Chat Completions with
-/// `max_tokens`, not `max_completion_tokens`, as documented by Ollama;
-/// `with_bridge` accepts any Chat Completions or Responses bridge.
+/// `new` takes the full request URL. Uses Chat Completions with `max_tokens`,
+/// not `max_completion_tokens`, as documented by Ollama; build a custom
+/// adapter on `BaseAdapter` for other bridges.
 /// `api_error`, `not_found_error`, and all unrecognized types are ambiguous on
 /// compatible servers and use HTTP-status fallback, never message matching.
 /// Retry-After takes precedence over retry-after-ms; milliseconds alone are
@@ -54,21 +52,6 @@ impl OpenAiCompatibleAdapter {
         self.inner
             .set_header("authorization", format!("Bearer {}", api_key.into()));
         self
-    }
-
-    pub fn with_bridge(self, bridge: Arc<dyn Bridge>) -> Result<Self, ConfigurationError> {
-        self.with_bridge_formats(bridge, &[ApiFormat::CHAT_COMPLETIONS, ApiFormat::RESPONSES])
-    }
-
-    pub(in crate::providers) fn with_bridge_formats(
-        mut self,
-        bridge: Arc<dyn Bridge>,
-        supported_formats: &[ApiFormat],
-    ) -> Result<Self, ConfigurationError> {
-        self.inner
-            .conversion
-            .replace_bridge(bridge, supported_formats)?;
-        Ok(self)
     }
 
     /// Enables model discovery; without it `list_models` is unsupported.

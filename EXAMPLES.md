@@ -189,18 +189,13 @@ Without allowed loss, encoding returns `BridgeError::Conversion` at the first un
 ## Adapter `build_request`
 
 ```rust
-use std::sync::Arc;
 use relay_adapter::AdapterExt;
 use relay_adapter::providers::{
     anthropic::AnthropicAdapter, ollama_cloud::OllamaCloudAdapter, openai::OpenAiAdapter,
-    openai_compatible::OpenAiCompatibleAdapter,
 };
-use relay_bridge::{ChatCompletionsBridge, LossScope};
+use relay_bridge::LossScope;
 
 let openai = OpenAiAdapter::new("KEY");
-let openai_chat = OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions")
-    .api_key("KEY")
-    .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
 let anthropic = AnthropicAdapter::new("KEY")
     .allow_loss([LossScope::Sampling, LossScope::ImageDetail]);
 let ollama = OllamaCloudAdapter::new("KEY");
@@ -736,12 +731,11 @@ impl StreamEncoder for GatewayJsonEncoder {
 Provider adapters live under `relay_adapter::providers`. Each ships the provider's published endpoint and header defaults; override them with builder setters, for example with values from your catalog.
 
 ```rust
-use std::sync::Arc;
 use relay_adapter::providers::{
     anthropic::AnthropicAdapter, ollama_cloud::OllamaCloudAdapter, openai::OpenAiAdapter,
     openai_compatible::OpenAiCompatibleAdapter,
 };
-use relay_bridge::{ChatCompletionsBridge, LossScope, ResponsesBridge};
+use relay_bridge::LossScope;
 
 let anthropic = AnthropicAdapter::new("anthropic-key")
     .base_url("https://api.anthropic.com")
@@ -756,17 +750,11 @@ let responses = OpenAiAdapter::new("openai-key")
     .organization("org-example")
     .project("proj-example")
     .store(false);
-let chat = OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions")
-    .api_key("openai-key")
-    .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
-
 let ollama = OllamaCloudAdapter::new("ollama-key");
 let self_hosted = OpenAiCompatibleAdapter::new("https://llm.example.com/v1/chat/completions")
     .api_key("self-hosted-key")
     .models_url("https://llm.example.com/v1/models")
     .without_tool_choice();
-let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/responses")
-    .with_bridge(Arc::new(ResponsesBridge::new()))?;
 ```
 
 ## Consumer HTTP transport
@@ -1036,8 +1024,7 @@ Implement `Adapter` directly when the provider's framing or error envelope diffe
 ```rust
 use std::sync::Arc;
 use relay_adapter::{Adapter, Conversion, ModelDiscovery};
-use relay_bridge::{ApiFormat, Bridge, ConversionOptions};
-use relay_protocol::ConfigurationError;
+use relay_bridge::{Bridge, ConversionOptions};
 
 struct GatewayAdapter {
     conversion: Conversion,
@@ -1048,10 +1035,9 @@ impl GatewayAdapter {
     fn new(
         bridge: Arc<dyn Bridge>, token: String,
         discovery: Option<Box<dyn ModelDiscovery>>,
-    ) -> Result<Self, ConfigurationError> {
-        let format = ApiFormat::new("gateway-json")?;
-        let conversion = Conversion::new(bridge, &[format], ConversionOptions::default())?;
-        Ok(Self { conversion, token, discovery })
+    ) -> Self {
+        let conversion = Conversion::new(bridge, ConversionOptions::default());
+        Self { conversion, token, discovery }
     }
 }
 ```
@@ -1186,7 +1172,7 @@ impl ModelDiscovery for GatewayDiscovery {
 use relay_adapter::AdapterExt;
 
 let bridge = Arc::new(GatewayJsonBridge { format: ApiFormat::new("gateway-json")? });
-let adapter = GatewayAdapter::new(bridge, "test-token".into(), Some(Box::new(GatewayDiscovery)))?;
+let adapter = GatewayAdapter::new(bridge, "test-token".into(), Some(Box::new(GatewayDiscovery)));
 let (request, losses) = adapter.build_request(&input)?;
 let response = send(&http, request).await?;
 let status = response.status().as_u16();
@@ -1198,7 +1184,7 @@ let output = adapter.parse_response(status, &headers, &body)?;
 ## Injecting an ID generator and clock
 
 ```rust
-let conversion = Conversion::new(bridge, &[ApiFormat::CHAT_COMPLETIONS], ConversionOptions::default())?
+let conversion = Conversion::new(bridge, ConversionOptions::default())
     .with_id_generator(|| "response-fallback".into())
     .with_clock(|| 1235);
 let context = conversion.decode_context();
@@ -1430,18 +1416,18 @@ if let Some(provider_model) = candidates.into_iter()
 
 ## Selecting a provider bridge
 
-`relay-catalog` does not depend on `relay-bridge`. In consumer code, turn the provider's strings into `ApiFormat` values and compare them with `bridge.format()` before attaching the bridge to an adapter. Supply the endpoint and credentials separately.
+`relay-catalog` does not depend on `relay-bridge`. In consumer code, turn the provider's strings into `ApiFormat` values and compare them with `bridge.format()` before building a custom adapter with that bridge. Supply the endpoint, credentials, and error classification separately.
 
 ```rust
 use std::sync::Arc;
-use relay_adapter::providers::openai_compatible::OpenAiCompatibleAdapter;
+use relay_adapter::{BaseAdapter, Classify};
 use relay_bridge::{ApiFormat, Bridge, ResponsesBridge};
 use relay_catalog::Provider;
 use relay_protocol::ConfigurationError;
 
 fn responses_adapter(
-    provider: &Provider, endpoint: &str, api_key: &str,
-) -> Result<OpenAiCompatibleAdapter, ConfigurationError> {
+    provider: &Provider, endpoint: &str, api_key: &str, classify: Classify,
+) -> Result<BaseAdapter, ConfigurationError> {
     let bridge = ResponsesBridge::new();
     let formats: Vec<ApiFormat> = provider.api_formats.iter()
         .map(|format| ApiFormat::new(format.clone()))
@@ -1449,9 +1435,8 @@ fn responses_adapter(
     if !formats.contains(bridge.format()) {
         return Err(ConfigurationError { message: "provider does not list responses".into() });
     }
-    OpenAiCompatibleAdapter::new(endpoint)
-        .api_key(api_key)
-        .with_bridge(Arc::new(bridge))
+    Ok(BaseAdapter::new(Arc::new(bridge), endpoint, classify)
+        .header("authorization", format!("Bearer {api_key}")))
 }
 ```
 

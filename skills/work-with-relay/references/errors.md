@@ -149,7 +149,7 @@ These come from the built-in bridges' `encode_request`. "Loss" means the field i
 | `JsonSchema` without `name` | Error |
 | `cache_control` | Loss `CacheControl` |
 
-**Chat Completions** (`ChatCompletionsBridge`, used by `OpenAiCompatibleAdapter` by default)
+**Chat Completions** (`ChatCompletionsBridge`, used by `OpenAiCompatibleAdapter` and `OllamaCloudAdapter`)
 
 | Field | Result |
 |---|---|

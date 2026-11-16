@@ -1,10 +1,10 @@
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, path::Path};
 
 use relay_adapter::providers::{
     anthropic::AnthropicAdapter, openai::OpenAiAdapter, openai_compatible::OpenAiCompatibleAdapter,
 };
 use relay_adapter::{Adapter, AdapterExt, Headers, Method, ModelPage};
-use relay_bridge::{ApiFormat, ChatCompletionsBridge, LossScope, MessagesBridge, ResponsesBridge};
+use relay_bridge::LossScope;
 use relay_protocol::{
     Error, ProviderError, ProviderErrorCategory as Category, Request, RetryAfter, StreamEvent,
 };
@@ -302,7 +302,7 @@ fn input() -> Request {
 
 #[test]
 fn requests_use_exact_endpoints_authentication_and_adapter_selected_paths() {
-    let cases: [(Box<dyn Adapter>, &str, Headers, &str); 7] = [
+    let cases: [(Box<dyn Adapter>, &str, Headers, &str); 5] = [
         (
             Box::new(AnthropicAdapter::new("anthropic-key")),
             "https://api.anthropic.com/v1/messages",
@@ -335,30 +335,6 @@ fn requests_use_exact_endpoints_authentication_and_adapter_selected_paths() {
                 ("content-type".into(), "application/json".into()),
                 ("authorization".into(), "Bearer key".into()),
             ]),
-            "max_output_tokens",
-        ),
-        (
-            Box::new(
-                OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions")
-                    .api_key("key")
-                    .with_bridge(Arc::new(ChatCompletionsBridge::new()))
-                    .expect("chat bridge"),
-            ),
-            "https://api.openai.com/v1/chat/completions",
-            Headers(vec![
-                ("content-type".into(), "application/json".into()),
-                ("authorization".into(), "Bearer key".into()),
-            ]),
-            "max_completion_tokens",
-        ),
-        (
-            Box::new(
-                OpenAiCompatibleAdapter::new("https://proxy.invalid/v1/responses")
-                    .with_bridge(Arc::new(ResponsesBridge::new()))
-                    .expect("responses bridge"),
-            ),
-            "https://proxy.invalid/v1/responses",
-            Headers(vec![("content-type".into(), "application/json".into())]),
             "max_output_tokens",
         ),
         (
@@ -441,22 +417,11 @@ fn compatible_server_declaration_rejects_any_choice_before_conversion() {
 }
 
 #[test]
-fn bridge_replacement_validates_formats_and_retains_loss_policy_and_identity_injection() {
-    assert!(
-        OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
-            .with_bridge(Arc::new(MessagesBridge::new()))
-            .is_err()
-    );
+fn builtin_adapter_applies_loss_policy_and_identity_injection() {
     let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
         .with_id_generator(|| "injected".into())
         .with_clock(|| 123)
-        .allow_loss([LossScope::CacheControl])
-        .with_bridge(Arc::new(ChatCompletionsBridge::new()))
-        .expect("replacement");
-    assert_eq!(
-        adapter.conversion().bridge().format(),
-        &ApiFormat::CHAT_COMPLETIONS
-    );
+        .allow_loss([LossScope::CacheControl]);
     let response = adapter.parse_response(200, &Headers::default(), br#"{"object":"chat.completion","model":"m","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#).expect("response");
     assert_eq!(response.id, "injected");
     assert_eq!(response.created_at.observed_at, 123);

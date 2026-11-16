@@ -220,12 +220,7 @@ impl Default for TestAdapter {
 impl TestAdapter {
     fn new(bridge: Arc<dyn Bridge>, options: ConversionOptions) -> Self {
         Self {
-            conversion: Conversion::new(
-                bridge,
-                &[ApiFormat::new("provider-wire").expect("nonempty format")],
-                options,
-            )
-            .expect("compatible provider bridge"),
+            conversion: Conversion::new(bridge, options),
             discovery: false,
             lenient: false,
         }
@@ -475,20 +470,7 @@ fn gateway_converts_between_client_and_provider_formats() {
 }
 
 #[test]
-fn incompatible_bridge_is_a_configuration_failure_naming_both_formats() {
-    let error: Error = Conversion::new(
-        Arc::new(TestBridge::client()),
-        &[ApiFormat::MESSAGES],
-        ConversionOptions::default(),
-    )
-    .err()
-    .expect("incompatible")
-    .into();
-    let Error::Configuration(error) = error else {
-        panic!("expected configuration error")
-    };
-    assert!(error.message.contains("client-wire"));
-    assert!(error.message.contains("messages"));
+fn empty_api_format_is_rejected() {
     assert!(ApiFormat::new("").is_err());
 }
 
@@ -929,10 +911,8 @@ fn injected_generator_and_clock_supply_exact_response_and_stream_identity() {
     let adapter = TestAdapter {
         conversion: Conversion::new(
             Arc::new(relay_bridge::ChatCompletionsBridge::new()),
-            &[ApiFormat::CHAT_COMPLETIONS],
             ConversionOptions::default(),
         )
-        .expect("compatible")
         .with_id_generator(|| "injected-response".into())
         .with_clock(|| 123),
         discovery: false,

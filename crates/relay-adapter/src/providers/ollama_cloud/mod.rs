@@ -3,8 +3,7 @@ mod error;
 use std::sync::Arc;
 
 use relay_bridge::{
-    ApiFormat, Bridge, ChatCompletionsBridge, LossScope, ReasoningField,
-    chat_completions::MaxTokensField,
+    ChatCompletionsBridge, LossScope, ReasoningField, chat_completions::MaxTokensField,
 };
 use relay_protocol::{ConfigurationError, ProviderError, Request};
 use serde_json::Value;
@@ -34,15 +33,6 @@ impl OllamaCloudAdapter {
         .models_url("https://ollama.com/v1/models")
         .without_tool_choice();
         Self { inner }
-    }
-
-    /// Accepts Chat Completions bridges only.
-    pub fn with_bridge(self, bridge: Arc<dyn Bridge>) -> Result<Self, ConfigurationError> {
-        Ok(Self {
-            inner: self
-                .inner
-                .with_bridge_formats(bridge, &[ApiFormat::CHAT_COMPLETIONS])?,
-        })
     }
 
     pub fn allow_loss(self, scopes: impl IntoIterator<Item = LossScope>) -> Self {

@@ -3,8 +3,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use relay_bridge::{ApiFormat, Bridge, ConversionOptions, DecodeContext};
-use relay_protocol::ConfigurationError;
+use relay_bridge::{Bridge, ConversionOptions, DecodeContext};
 
 pub struct Conversion {
     bridge: Arc<dyn Bridge>,
@@ -14,28 +13,7 @@ pub struct Conversion {
 }
 
 impl Conversion {
-    pub fn new(
-        bridge: Arc<dyn Bridge>,
-        supported_formats: &[ApiFormat],
-        options: ConversionOptions,
-    ) -> Result<Self, ConfigurationError> {
-        if !supported_formats.contains(bridge.format()) {
-            let supported = supported_formats
-                .iter()
-                .map(ApiFormat::as_str)
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(ConfigurationError {
-                message: format!(
-                    "bridge format {} is not supported by adapter (supported formats: [{supported}])",
-                    bridge.format()
-                ),
-            });
-        }
-        Ok(Self::from_bridge(bridge, options))
-    }
-
-    pub(crate) fn from_bridge(bridge: Arc<dyn Bridge>, options: ConversionOptions) -> Self {
+    pub fn new(bridge: Arc<dyn Bridge>, options: ConversionOptions) -> Self {
         Self {
             bridge,
             options,
@@ -47,16 +25,6 @@ impl Conversion {
                     .as_secs()
             }),
         }
-    }
-
-    pub(crate) fn replace_bridge(
-        &mut self,
-        bridge: Arc<dyn Bridge>,
-        supported_formats: &[ApiFormat],
-    ) -> Result<(), ConfigurationError> {
-        let checked = Self::new(bridge, supported_formats, self.options.clone())?;
-        self.bridge = checked.bridge;
-        Ok(())
     }
 
     pub(crate) fn set_bridge(&mut self, bridge: Arc<dyn Bridge>) {

@@ -5,17 +5,15 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use relay_adapter::providers::{
-    anthropic::AnthropicAdapter, openai_compatible::OpenAiCompatibleAdapter,
-};
-use relay_adapter::{Adapter, AdapterExt, Headers, Method};
+use relay_adapter::providers::anthropic::AnthropicAdapter;
+use relay_adapter::{Adapter, AdapterExt, BaseAdapter, Headers, Method};
 use relay_bridge::{
     ApiFormat, Bridge, BridgeError, ChatCompletionsBridge, ConversionOptions, DecodeContext,
     Encoded, MessagesBridge, ResponsesBridge, StreamDecoder, StreamEncoder,
 };
 use relay_protocol::{
-    ConversionError, ConversionErrorKind, DecodeError, Error, ProviderErrorCategory, Request,
-    Response, StreamEvent,
+    ConversionError, ConversionErrorKind, DecodeError, Error, ProviderError, ProviderErrorCategory,
+    Request, Response, StreamEvent,
 };
 use serde_json::{Value, json};
 
@@ -115,15 +113,36 @@ fn recorded_headers(raw: &str) -> (u16, Headers) {
     (status, headers)
 }
 
+fn status_classify(
+    _payload: &Value,
+    _envelope: &Value,
+    http_status: Option<u16>,
+    _headers: &Headers,
+) -> ProviderError {
+    ProviderError {
+        category: match http_status {
+            Some(401) => ProviderErrorCategory::Authentication,
+            _ => ProviderErrorCategory::Unknown,
+        },
+        message: "provider returned an error".into(),
+        code: None,
+        http_status,
+        request_id: None,
+        retry_after: None,
+    }
+}
+
 #[test]
-fn builtin_adapter_uses_custom_bridge_bodies_but_keeps_provider_error_ownership() {
+fn custom_bridge_bodies_keep_adapter_provider_error_ownership() {
     let bridge = Arc::new(PassthroughBridge {
         decoded_responses: AtomicUsize::new(0),
     });
-    let adapter = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
-        .api_key("fixture-key")
-        .with_bridge(bridge.clone())
-        .expect("compatible custom bridge");
+    let adapter = BaseAdapter::new(
+        bridge.clone(),
+        "https://ollama.com/v1/chat/completions",
+        status_classify,
+    )
+    .header("authorization", "Bearer fixture-key");
     let input = request();
     let (built, losses) = adapter.build_request(&input).expect("custom request");
     assert_eq!(built.method, Method::Post);

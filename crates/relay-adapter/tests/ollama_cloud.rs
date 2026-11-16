@@ -1,8 +1,7 @@
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, path::Path};
 
 use relay_adapter::providers::ollama_cloud::OllamaCloudAdapter;
 use relay_adapter::{Adapter, AdapterExt, Headers, Method};
-use relay_bridge::{ApiFormat, ChatCompletionsBridge, MessagesBridge, ResponsesBridge};
 use relay_protocol::{
     AssistantContent, Error, ProviderErrorCategory as Category, Request, StopReason, StreamDelta,
     StreamEvent,
@@ -153,27 +152,6 @@ fn mid_stream_not_found_without_http_status_stays_unknown() {
         panic!("provider error: {items:?}")
     };
     assert_eq!(error.category, Category::Unknown);
-}
-
-#[test]
-fn bridge_replacement_accepts_chat_completions_only() {
-    assert!(
-        OllamaCloudAdapter::new("key")
-            .with_bridge(Arc::new(ResponsesBridge::new()))
-            .is_err()
-    );
-    assert!(
-        OllamaCloudAdapter::new("key")
-            .with_bridge(Arc::new(MessagesBridge::new()))
-            .is_err()
-    );
-    let adapter = OllamaCloudAdapter::new("key")
-        .with_bridge(Arc::new(ChatCompletionsBridge::new()))
-        .expect("replacement");
-    assert_eq!(
-        adapter.conversion().bridge().format(),
-        &ApiFormat::CHAT_COMPLETIONS
-    );
 }
 
 #[test]

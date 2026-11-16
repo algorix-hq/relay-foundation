@@ -11,7 +11,7 @@ Relay converts LLM API traffic, classifies provider failures, and offers a clien
 |---|---|
 | `relay-protocol` | Provider-neutral data: `Request`, `Response`, `StreamEvent`, `relay_protocol::Error` |
 | `relay-bridge` | One API format each: decode/encode requests, responses, and streams. Built-ins: `ChatCompletionsBridge`, `ResponsesBridge`, `MessagesBridge` |
-| `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins under `providers`: `openai::OpenAiAdapter` (Responses), `anthropic::AnthropicAdapter` (Messages), `openai_compatible::OpenAiCompatibleAdapter` (Chat Completions by default, or Responses), `ollama_cloud::OllamaCloudAdapter` (Chat Completions, wraps `OpenAiCompatibleAdapter`), all built on `BaseAdapter` |
+| `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins under `providers`: `openai::OpenAiAdapter` (Responses), `anthropic::AnthropicAdapter` (Messages), `openai_compatible::OpenAiCompatibleAdapter` (Chat Completions with `max_tokens`), `ollama_cloud::OllamaCloudAdapter` (Chat Completions, wraps `OpenAiCompatibleAdapter`), all built on `BaseAdapter`. Built-in adapters fix their bridge; pass a different bridge to `BaseAdapter::new` in a custom adapter |
 | `relay-client` | `Client::generate`, `stream`, and `list_models` over a consumer-injected `Transport`; optional `ReqwestTransport` with feature `reqwest` |
 | `relay-catalog` | Catalog data types only: `Lab`, `Provider`, `Auth`, `Model`, `ProviderModel`, `ProviderModelAlias`, `Spec`, `Pricing`, and `validate`. No data, no fetching |
 

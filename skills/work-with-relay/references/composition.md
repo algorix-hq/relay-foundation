@@ -20,23 +20,21 @@
 
 | Provider | Adapter | Provider bridge |
 |---|---|---|
-| OpenAI Responses | `OpenAiAdapter::new(key)` | Responses (fixed) |
-| OpenAI Chat Completions | `OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions").api_key(key).with_bridge(Arc::new(ChatCompletionsBridge::new()))?` | Chat Completions with `max_completion_tokens` |
-| Anthropic | `AnthropicAdapter::new(key)` | Messages (fixed) |
-| Ollama Cloud | `OllamaCloudAdapter::new(key)` | Chat Completions with `max_tokens` and `ReasoningField::Reasoning`; `with_bridge` accepts Chat Completions only |
-| Local Ollama or other compatible server | `OpenAiCompatibleAdapter::new(full_url).api_key(key)` | Chat Completions with `max_tokens`; `with_bridge` accepts a Chat Completions or Responses bridge |
+| OpenAI Responses | `OpenAiAdapter::new(key)` | Responses |
+| Anthropic | `AnthropicAdapter::new(key)` | Messages |
+| Ollama Cloud | `OllamaCloudAdapter::new(key)` | Chat Completions with `max_tokens` and `ReasoningField::Reasoning` |
+| Local Ollama or other compatible server | `OpenAiCompatibleAdapter::new(full_url).api_key(key)` | Chat Completions with `max_tokens` |
 
-The client bridge and the adapter's bridge are separate objects. `Conversion::new` and `with_bridge` check that the adapter's bridge format is one the adapter supports, and return `ConfigurationError` otherwise.
+Built-in adapters fix their provider bridge; it cannot be replaced. For any other bridge configuration (OpenAI Chat Completions with `max_completion_tokens`, a compatible Responses endpoint, a different `ReasoningField`), build a custom adapter on `BaseAdapter` with the bridge you need; see `custom-adapter.md`. The client bridge and the adapter's bridge are separate objects.
 
 ## Built-in constructors
 
 ```rust
-use std::sync::Arc;
 use relay_adapter::providers::{
     anthropic::AnthropicAdapter, ollama_cloud::OllamaCloudAdapter, openai::OpenAiAdapter,
     openai_compatible::OpenAiCompatibleAdapter,
 };
-use relay_bridge::{ChatCompletionsBridge, LossScope, ResponsesBridge};
+use relay_bridge::LossScope;
 
 let anthropic = AnthropicAdapter::new(key)
     .base_url("https://api.anthropic.com")      // default; path /v1/messages is appended
@@ -57,9 +55,6 @@ let self_hosted = OpenAiCompatibleAdapter::new("https://llm.example.com/v1/chat/
     .api_key(key)
     .models_url("https://llm.example.com/v1/models") // enables list_models
     .without_tool_choice();                     // server ignores tool_choice; requests that set it fail early
-
-let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/responses")
-    .with_bridge(Arc::new(ResponsesBridge::new()))?;
 ```
 
 All built-ins also have `allow_loss`, `with_id_generator`, and `with_clock`. The Anthropic Messages API requires an output limit; without `default_max_tokens` a request lacking `max_output_tokens` fails conversion.
@@ -70,18 +65,17 @@ Bridge methods need the `relay_bridge::Bridge` trait in scope. Consumer adapter 
 
 ## Chat Completions reasoning text
 
-Configure the wire field explicitly on each bridge that needs it:
+Configure the wire field explicitly on each bridge that needs it. For a provider endpoint, pass the configured bridge to a custom adapter:
 
 ```rust
 use std::sync::Arc;
-use relay_adapter::providers::openai_compatible::OpenAiCompatibleAdapter;
+use relay_adapter::BaseAdapter;
 use relay_bridge::{ChatCompletionsBridge, ReasoningField};
 use relay_bridge::chat_completions::MaxTokensField;
 
 let bridge = ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)
     .with_reasoning_field(ReasoningField::ReasoningContent);
-let adapter = OpenAiCompatibleAdapter::new("https://api.example.com/v1/chat/completions")
-    .with_bridge(Arc::new(bridge))?;
+let adapter = BaseAdapter::new(Arc::new(bridge), "https://api.example.com/v1/chat/completions", classify);
 ```
 
 `with_reasoning_field(self, field)` is an instance builder, also chainable on `ChatCompletionsBridge::new()`. `ReasoningField` is exported from `relay_bridge` alongside `ChatCompletionsBridge`: `Disabled` (default), `ReasoningContent` (`reasoning_content`), or `Reasoning` (`reasoning`). It controls request/history, response, and stream conversion in both directions. The selected string field maps to protocol reasoning text; `reasoning_effort` remains independent.

@@ -5,7 +5,7 @@ use relay_adapter::{
     Method, Outcome, ProviderRequest, Stage,
 };
 use relay_bridge::{
-    ApiFormat, Bridge, ChatCompletionsBridge, ConversionOptions, DecodeContext, Frame, LossScope,
+    Bridge, ChatCompletionsBridge, ConversionOptions, DecodeContext, Frame, LossScope,
     MessagesBridge, ResponsesBridge,
 };
 use relay_protocol::{
@@ -23,20 +23,11 @@ struct CustomAdapter {
 
 impl CustomAdapter {
     fn new(bridge: Arc<dyn Bridge>, options: ConversionOptions) -> Self {
-        let formats = [bridge.format().clone()];
-        Self::with_formats(bridge, &formats, options).expect("compatible bridge")
-    }
-
-    fn with_formats(
-        bridge: Arc<dyn Bridge>,
-        formats: &[ApiFormat],
-        options: ConversionOptions,
-    ) -> Result<Self, ConfigurationError> {
-        Ok(Self {
-            conversion: Conversion::new(bridge, formats, options)?
+        Self {
+            conversion: Conversion::new(bridge, options)
                 .with_id_generator(|| FALLBACK_ID.into())
                 .with_clock(|| OBSERVED_AT),
-        })
+        }
     }
 }
 
@@ -673,17 +664,4 @@ fn messages_composition_requires_explicit_loss_for_foreign_reasoning_and_samplin
             _ => unreachable!("table contains only reasoning and sampling"),
         }
     }
-}
-
-#[test]
-fn messages_only_custom_adapter_rejects_chat_completions_composition() {
-    let error: Error = CustomAdapter::with_formats(
-        Arc::new(ChatCompletionsBridge::new()),
-        &[ApiFormat::MESSAGES],
-        ConversionOptions::default(),
-    )
-    .err()
-    .expect("incompatible composition")
-    .into();
-    assert!(matches!(error, Error::Configuration(_)));
 }

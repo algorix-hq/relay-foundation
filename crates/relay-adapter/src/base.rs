@@ -30,7 +30,7 @@ pub struct BaseAdapter {
 impl BaseAdapter {
     pub fn new(bridge: Arc<dyn Bridge>, url: impl Into<String>, classify: Classify) -> Self {
         Self {
-            conversion: Conversion::from_bridge(bridge, ConversionOptions::default()),
+            conversion: Conversion::new(bridge, ConversionOptions::default()),
             classify,
             headers: Headers(vec![("content-type".into(), "application/json".into())]),
             url: url.into(),
