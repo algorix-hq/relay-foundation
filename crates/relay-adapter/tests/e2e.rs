@@ -3,9 +3,10 @@
 
 use std::fs;
 
-use relay_adapter::{
-    Adapter, AdapterExt, AnthropicAdapter, Headers, OpenAiAdapter, OpenAiCompatibleAdapter,
+use relay_adapter::providers::{
+    anthropic::AnthropicAdapter, openai::OpenAiAdapter, openai_compatible::OpenAiCompatibleAdapter,
 };
+use relay_adapter::{Adapter, AdapterExt, Headers};
 use relay_protocol::{
     Delivery, Message, Parameters, Request, StopReason, StreamEvent, TextPart, UserContent, Version,
 };

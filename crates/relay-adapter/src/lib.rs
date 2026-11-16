@@ -2,16 +2,17 @@
 //! Consumer operations unify Relay failures while transport and cancellation remain consumer-owned.
 
 mod adapter;
-mod builtin;
+mod base;
 mod conversion;
 mod encoders;
 mod error;
 mod http;
+pub mod providers;
 mod sse;
 mod stream;
 
 pub use adapter::*;
-pub use builtin::{AnthropicAdapter, OpenAiAdapter, OpenAiCompatibleAdapter};
+pub use base::{BaseAdapter, Classify};
 pub use conversion::*;
 pub use encoders::*;
 pub use error::*;

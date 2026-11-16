@@ -8,8 +8,10 @@ use relay_bridge::{
 use relay_protocol::{ConfigurationError, ProviderError, Request};
 use serde_json::Value;
 
-use super::{Builtin, openai, required_url};
-use crate::{Adapter, Conversion, FrameDecoder, Headers, ModelDiscovery, ProviderRequest};
+use super::openai;
+use crate::{
+    Adapter, BaseAdapter, Conversion, FrameDecoder, Headers, ModelDiscovery, ProviderRequest,
+};
 
 /// `new` takes the full request URL. Defaults to Chat Completions with
 /// `max_tokens`, not `max_completion_tokens`, as documented by Ollama;
@@ -19,8 +21,7 @@ use crate::{Adapter, Conversion, FrameDecoder, Headers, ModelDiscovery, Provider
 /// Retry-After takes precedence over retry-after-ms; milliseconds alone are
 /// rounded up to whole seconds.
 pub struct OpenAiCompatibleAdapter {
-    inner: Builtin,
-    url: String,
+    inner: BaseAdapter,
     models_url: Option<String>,
     without_tool_choice: bool,
 }
@@ -28,14 +29,13 @@ pub struct OpenAiCompatibleAdapter {
 impl OpenAiCompatibleAdapter {
     pub fn new(url: impl Into<String>) -> Self {
         Self {
-            inner: Builtin::new(
-                openai::error::classify,
+            inner: BaseAdapter::new(
                 Arc::new(ChatCompletionsBridge::with_max_tokens_field(
                     MaxTokensField::MaxTokens,
                 )),
-                None,
+                url,
+                openai::error::classify,
             ),
-            url: url.into(),
             models_url: None,
             without_tool_choice: false,
         }
@@ -106,11 +106,11 @@ impl Adapter for OpenAiCompatibleAdapter {
 
     fn assemble_request(
         &self,
-        _model: &str,
+        model: &str,
         body: Value,
-        _stream: bool,
+        stream: bool,
     ) -> Result<ProviderRequest, ConfigurationError> {
-        self.inner.post(required_url(&self.url, "url")?, body)
+        self.inner.assemble_request(model, body, stream)
     }
 
     fn check_response(

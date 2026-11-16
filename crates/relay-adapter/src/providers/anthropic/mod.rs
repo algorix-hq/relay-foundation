@@ -7,24 +7,27 @@ use relay_bridge::{LossScope, MessagesBridge};
 use relay_protocol::{ConfigurationError, ProviderError};
 use serde_json::Value;
 
-use super::{Builtin, join};
-use crate::{Adapter, Conversion, FrameDecoder, Headers, ModelDiscovery, ProviderRequest};
+use super::join;
+use crate::{
+    Adapter, BaseAdapter, Conversion, FrameDecoder, Headers, ModelDiscovery, ProviderRequest,
+};
 
 /// Uses Messages with Bearer authentication and version `2026-10-21` by default.
 /// Retry-After seconds or dates are preserved; when only retry-after-ms is
 /// present, milliseconds are rounded up to whole seconds.
 pub struct AnthropicAdapter {
-    inner: Builtin,
+    inner: BaseAdapter,
     base_url: String,
 }
 
 impl AnthropicAdapter {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let mut inner = Builtin::new(
-            error::classify,
+        let mut inner = BaseAdapter::new(
             Arc::new(MessagesBridge::new()),
-            Some(api_key.into()),
-        );
+            "https://api.anthropic.com/v1/messages",
+            error::classify,
+        )
+        .header("authorization", format!("Bearer {}", api_key.into()));
         inner.set_header("anthropic-version", "2026-10-21".into());
         Self {
             inner,

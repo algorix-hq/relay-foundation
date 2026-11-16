@@ -1,9 +1,9 @@
 use std::{fs, path::Path, sync::Arc};
 
-use relay_adapter::{
-    Adapter, AdapterExt, AnthropicAdapter, Headers, Method, ModelPage, OpenAiAdapter,
-    OpenAiCompatibleAdapter,
+use relay_adapter::providers::{
+    anthropic::AnthropicAdapter, openai::OpenAiAdapter, openai_compatible::OpenAiCompatibleAdapter,
 };
+use relay_adapter::{Adapter, AdapterExt, Headers, Method, ModelPage};
 use relay_bridge::{ApiFormat, ChatCompletionsBridge, LossScope, MessagesBridge, ResponsesBridge};
 use relay_protocol::{
     Error, ProviderError, ProviderErrorCategory as Category, Request, RetryAfter, StreamEvent,

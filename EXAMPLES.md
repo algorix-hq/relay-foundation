@@ -190,7 +190,11 @@ Without allowed loss, encoding returns `BridgeError::Conversion` at the first un
 
 ```rust
 use std::sync::Arc;
-use relay_adapter::{AdapterExt, AnthropicAdapter, OpenAiAdapter, OpenAiCompatibleAdapter};
+use relay_adapter::AdapterExt;
+use relay_adapter::providers::{
+    anthropic::AnthropicAdapter, openai::OpenAiAdapter,
+    openai_compatible::OpenAiCompatibleAdapter,
+};
 use relay_bridge::{ChatCompletionsBridge, LossScope};
 
 let openai = OpenAiAdapter::new("KEY");
@@ -727,11 +731,16 @@ impl StreamEncoder for GatewayJsonEncoder {
 
 # 3. Adapter (`relay-adapter`)
 
-## Built-in Adapters
+## Provider adapters
+
+Provider adapters live under `relay_adapter::providers`. Each ships the provider's published endpoint and header defaults; override them with builder setters, for example with values from your catalog.
 
 ```rust
 use std::sync::Arc;
-use relay_adapter::{AnthropicAdapter, OpenAiAdapter, OpenAiCompatibleAdapter};
+use relay_adapter::providers::{
+    anthropic::AnthropicAdapter, openai::OpenAiAdapter,
+    openai_compatible::OpenAiCompatibleAdapter,
+};
 use relay_bridge::{ChatCompletionsBridge, LossScope, ResponsesBridge};
 
 let anthropic = AnthropicAdapter::new("anthropic-key")
@@ -817,7 +826,8 @@ fn headers_of(response: &reqwest::Response) -> Result<Headers, GatewayError> {
 ## Non-streaming request
 
 ```rust
-use relay_adapter::{AdapterExt, AnthropicAdapter};
+use relay_adapter::AdapterExt;
+use relay_adapter::providers::anthropic::AnthropicAdapter;
 use relay_bridge::{Bridge, ChatCompletionsBridge, ConversionOptions, Encoded};
 
 async fn complete(
@@ -980,6 +990,45 @@ let next_cursor = page.next_cursor.as_deref();
 ```
 
 ## Implementing a custom Adapter
+
+### On the shared base
+
+`BaseAdapter` is the type the provider adapters are built on. It covers JSON POST requests, SSE framing, and the HTTP and mid-stream error paths; you supply the bridge, the endpoint, headers, and the function that classifies the provider's error payload. Wrap it when you need behavior it does not cover, such as `validate_request` or model discovery.
+
+```rust
+use std::sync::Arc;
+use relay_adapter::{BaseAdapter, Headers};
+use relay_bridge::ChatCompletionsBridge;
+use relay_protocol::{ProviderError, ProviderErrorCategory};
+use serde_json::Value;
+
+fn classify(
+    payload: &Value, _envelope: &Value, http_status: Option<u16>, headers: &Headers,
+) -> ProviderError {
+    let code = payload["code"].as_str().map(str::to_owned);
+    let category = match code.as_deref() {
+        Some("quota_exceeded") => ProviderErrorCategory::InsufficientQuota,
+        _ => ProviderErrorCategory::Unknown,
+    };
+    ProviderError {
+        category,
+        message: payload["message"].as_str().unwrap_or("provider request failed").into(),
+        code, http_status,
+        request_id: headers.get("x-request-id").map(str::to_owned), retry_after: None,
+    }
+}
+
+let adapter = BaseAdapter::new(
+    Arc::new(ChatCompletionsBridge::new()),
+    "https://provider.example/v1/chat/completions",
+    classify,
+)
+.header("authorization", "Bearer provider-key");
+```
+
+### From the Adapter trait
+
+Implement `Adapter` directly when the provider's framing or error envelope differs from what `BaseAdapter` handles.
 
 ```rust
 use std::sync::Arc;
@@ -1250,7 +1299,7 @@ if let Some(provider_model) = candidates.into_iter()
 
 ```rust
 use std::sync::Arc;
-use relay_adapter::OpenAiCompatibleAdapter;
+use relay_adapter::providers::openai_compatible::OpenAiCompatibleAdapter;
 use relay_bridge::{ApiFormat, Bridge, ResponsesBridge};
 use relay_catalog::Provider;
 use relay_protocol::ConfigurationError;

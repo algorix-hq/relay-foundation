@@ -31,7 +31,10 @@ The client bridge and the adapter's bridge are separate objects. `Conversion::ne
 
 ```rust
 use std::sync::Arc;
-use relay_adapter::{AnthropicAdapter, OpenAiAdapter, OpenAiCompatibleAdapter};
+use relay_adapter::providers::{
+    anthropic::AnthropicAdapter, openai::OpenAiAdapter,
+    openai_compatible::OpenAiCompatibleAdapter,
+};
 use relay_bridge::{ChatCompletionsBridge, LossScope, ResponsesBridge};
 
 let anthropic = AnthropicAdapter::new(key)
@@ -67,7 +70,7 @@ Configure the wire field explicitly on each bridge that needs it:
 
 ```rust
 use std::sync::Arc;
-use relay_adapter::OpenAiCompatibleAdapter;
+use relay_adapter::providers::openai_compatible::OpenAiCompatibleAdapter;
 use relay_bridge::{ChatCompletionsBridge, ReasoningField};
 use relay_bridge::chat_completions::MaxTokensField;
 
@@ -128,7 +131,8 @@ Do not check `response.status().is_success()` and build an error yourself. Pass 
 ## Non-streaming request
 
 ```rust
-use relay_adapter::{AdapterExt, AnthropicAdapter};
+use relay_adapter::AdapterExt;
+use relay_adapter::providers::anthropic::AnthropicAdapter;
 use relay_bridge::{Bridge, ChatCompletionsBridge, ConversionOptions, Encoded};
 
 async fn complete(http: &reqwest::Client, adapter: &AnthropicAdapter, client_body: &[u8]) -> Result<Encoded, GatewayError> {

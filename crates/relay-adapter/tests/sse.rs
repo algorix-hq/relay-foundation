@@ -1,4 +1,5 @@
-use relay_adapter::{Adapter, AdapterExt, Headers, OpenAiCompatibleAdapter, SseDecoder};
+use relay_adapter::providers::openai_compatible::OpenAiCompatibleAdapter;
+use relay_adapter::{Adapter, AdapterExt, Headers, SseDecoder};
 use relay_bridge::Frame;
 use relay_protocol::{Error, StreamEvent};
 

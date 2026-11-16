@@ -11,7 +11,7 @@ Relay has three Rust crates that convert LLM API traffic and a separate catalog 
 |---|---|
 | `relay-protocol` | Provider-neutral data: `Request`, `Response`, `StreamEvent`, `relay_protocol::Error` |
 | `relay-bridge` | One API format each: decode/encode requests, responses, and streams. Built-ins: `ChatCompletionsBridge`, `ResponsesBridge`, `MessagesBridge` |
-| `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins: `OpenAiAdapter` (Responses), `AnthropicAdapter` (Messages), `OpenAiCompatibleAdapter` (Chat Completions by default, or Responses) |
+| `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins under `providers`: `openai::OpenAiAdapter` (Responses), `anthropic::AnthropicAdapter` (Messages), `openai_compatible::OpenAiCompatibleAdapter` (Chat Completions by default, or Responses), all built on `BaseAdapter` |
 | `relay-catalog` | Catalog data types only: `Lab`, `Provider`, `Auth`, `Model`, `ProviderModel`, `ProviderModelAlias`, `Spec`, `Pricing`, and `validate`. No data, no fetching |
 
 A gateway uses two bridges. The **client bridge** matches the API the gateway's caller speaks. The adapter carries its own **provider bridge** for the API the provider speaks. They are independent: a Chat Completions client can be served by an Anthropic adapter.
@@ -59,7 +59,8 @@ When you do, go straight to the file that owns the item instead of browsing:
 | Item | File |
 |---|---|
 | `Adapter`, `AdapterExt`, `FrameDecoder`, `ModelDiscovery`, `RejectedResponse` | `crates/relay-adapter/src/lib.rs` |
-| Built-in adapters and their builder methods | `crates/relay-adapter/src/builtins.rs` |
+| Provider adapters and their builder methods | `crates/relay-adapter/src/providers/{openai,anthropic,openai_compatible}/mod.rs` |
+| `BaseAdapter`, `Classify` | `crates/relay-adapter/src/base.rs` |
 | `AdapterStream`, `Transcoder`, `Outcome` | `crates/relay-adapter/src/stream.rs` |
 | `ErrorEncoder`, `Stage`, `EncodedError` / built-in encoders | `crates/relay-adapter/src/error.rs` / `encoders.rs` |
 | `Headers`, `Method`, `ProviderRequest` | `crates/relay-adapter/src/http.rs` |
@@ -69,7 +70,7 @@ When you do, go straight to the file that owns the item instead of browsing:
 | Protocol types | `crates/relay-protocol/src/{request,message,content,tool,response,stream,error}.rs` |
 | Catalog types | `crates/relay-catalog/src/lib.rs` |
 
-There are no other crates and no per-provider files; do not search for `anthropic.rs` or `providers/`. In a consumer project the source lives in Cargo's git checkout, `~/.cargo/git/checkouts/relay-foundation-*/<rev>/`.
+In a consumer project the source lives in Cargo's git checkout, `~/.cargo/git/checkouts/relay-foundation-*/<rev>/`.
 
 ## Before finishing
 

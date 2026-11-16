@@ -7,25 +7,28 @@ use relay_bridge::{LossScope, ResponsesBridge, responses::ResponsesBridgeConfig}
 use relay_protocol::{ConfigurationError, ProviderError};
 use serde_json::Value;
 
-use super::{Builtin, join};
-use crate::{Adapter, Conversion, FrameDecoder, Headers, ModelDiscovery, ProviderRequest};
+use super::join;
+use crate::{
+    Adapter, BaseAdapter, Conversion, FrameDecoder, Headers, ModelDiscovery, ProviderRequest,
+};
 
 /// Uses Responses. Chat Completions on OpenAI goes through `OpenAiCompatibleAdapter`.
 /// Retry-After takes precedence over retry-after-ms, which is rounded up to
 /// whole seconds when no Retry-After is present.
 pub struct OpenAiAdapter {
-    inner: Builtin,
+    inner: BaseAdapter,
     base_url: String,
 }
 
 impl OpenAiAdapter {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
-            inner: Builtin::new(
-                error::classify,
+            inner: BaseAdapter::new(
                 Arc::new(ResponsesBridge::new()),
-                Some(api_key.into()),
-            ),
+                "https://api.openai.com/v1/responses",
+                error::classify,
+            )
+            .header("authorization", format!("Bearer {}", api_key.into())),
             base_url: "https://api.openai.com/v1".into(),
         }
     }

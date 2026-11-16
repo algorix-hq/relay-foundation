@@ -5,9 +5,10 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use relay_adapter::{
-    Adapter, AdapterExt, AnthropicAdapter, Headers, Method, OpenAiCompatibleAdapter,
+use relay_adapter::providers::{
+    anthropic::AnthropicAdapter, openai_compatible::OpenAiCompatibleAdapter,
 };
+use relay_adapter::{Adapter, AdapterExt, Headers, Method};
 use relay_bridge::{
     ApiFormat, Bridge, BridgeError, ChatCompletionsBridge, ConversionOptions, DecodeContext,
     Encoded, MessagesBridge, ResponsesBridge, StreamDecoder, StreamEncoder,

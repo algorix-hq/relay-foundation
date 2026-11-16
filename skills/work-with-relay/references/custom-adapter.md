@@ -7,7 +7,45 @@ Built-ins cover OpenAI, Anthropic, and OpenAI-compatible servers. Any other prov
 - If the provider speaks Chat Completions, Responses, or Messages on the wire, reuse that built-in bridge. Then check whether `OpenAiCompatibleAdapter` already fits; if so, no custom adapter is needed.
 - If the provider has its own wire format, implement `relay_bridge::Bridge` for it as well, with an `ApiFormat::new("your-format")?` identifier. Implement `StreamDecoder` and `StreamEncoder` for streaming. The bridge must stay strict: return `BridgeError::Conversion` for unrepresentable input and push a `ConversionLoss` for every allowed drop. A bridge never detects provider errors.
 
-## Trait to implement
+## Start with `BaseAdapter`
+
+`relay_adapter::BaseAdapter` is the shared base of the provider adapters under `relay_adapter::providers`. Use it for JSON POST requests and SSE framing with a custom error classifier before implementing `Adapter` yourself.
+
+```rust
+use std::sync::Arc;
+use relay_adapter::{BaseAdapter, Headers};
+use relay_bridge::ChatCompletionsBridge;
+use relay_protocol::{ProviderError, ProviderErrorCategory};
+use serde_json::Value;
+
+fn classify(
+    payload: &Value, _envelope: &Value, http_status: Option<u16>, headers: &Headers,
+) -> ProviderError {
+    ProviderError {
+        category: ProviderErrorCategory::Unknown,
+        message: payload["message"].as_str().unwrap_or("provider request failed").into(),
+        code: payload["code"].as_str().map(str::to_owned),
+        http_status,
+        request_id: headers.get("x-request-id").map(str::to_owned),
+        retry_after: None,
+    }
+}
+
+let adapter = BaseAdapter::new(
+    Arc::new(ChatCompletionsBridge::new()),
+    "https://provider.example/v1/chat/completions",
+    classify,
+)
+.header("authorization", "Bearer provider-key");
+```
+
+`new(bridge: Arc<dyn Bridge>, url: impl Into<String>, classify: Classify)` sets `content-type: application/json` and no auth header. `Classify` is `fn(&Value, &Value, Option<u16>, &Headers) -> ProviderError`: payload, full envelope, HTTP status, response headers. `.header(name, value)` replaces an existing header of the same name. The base also has `allow_loss`, `with_id_generator`, and `with_clock`, but no model discovery. Wrap it to add request validation or discovery.
+
+It recognizes `type: "response.failed"` at `response.error`, `type: "error"` at `error` or the envelope itself, non-null `error`, and `status: "failed"`. SSE events named `error` or `response.failed` also reach the classifier, with `http_status: None`.
+
+## Implement the trait when needed
+
+Implement `Adapter` directly when the provider's framing or error envelope differs from what `BaseAdapter` handles.
 
 ```rust
 pub trait Adapter: Send + Sync {

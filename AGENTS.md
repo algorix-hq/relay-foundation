@@ -16,4 +16,4 @@
 - Conversion is strict. Unrepresentable input returns a conversion error. Drop data only when the consumer explicitly allows it, and report what was dropped.
 - No HTTP client or async runtime in any crate. No model catalog, pricing, context-window, or capability types in any crate except `relay-catalog`.
 - `relay-catalog` defines catalog types only. It holds no catalog data and does no fetching or caching, and it neither depends on nor is depended on by `relay-protocol`, `relay-bridge`, or `relay-adapter`. It ignores unknown fields on purpose, unlike the protocol.
-- Built-ins are limited to Chat Completions, Responses, and Messages bridges and OpenAI, Anthropic, and OpenAI Compatible adapters. Other providers, such as Kiro and ChatGPT, are consumer custom adapters.
+- Built-ins are limited to Chat Completions, Responses, and Messages bridges and OpenAI, Anthropic, and OpenAI Compatible adapters. The built-in provider adapters live under `relay_adapter::providers` and are built on `BaseAdapter`. Other providers, such as Kiro and ChatGPT, are consumer custom adapters.

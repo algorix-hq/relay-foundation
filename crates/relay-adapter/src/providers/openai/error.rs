@@ -4,7 +4,7 @@ use serde_json::Value;
 use super::super::provider_error;
 use crate::Headers;
 
-pub(in crate::builtin) fn classify(
+pub(in crate::providers) fn classify(
     payload: &Value,
     _envelope: &Value,
     http_status: Option<u16>,
