@@ -4,7 +4,8 @@
 use std::fs;
 
 use relay_adapter::providers::{
-    anthropic::AnthropicAdapter, openai::OpenAiAdapter, openai_compatible::OpenAiCompatibleAdapter,
+    anthropic::AnthropicAdapter, ollama_cloud::OllamaCloudAdapter, openai::OpenAiAdapter,
+    openai_compatible::OpenAiCompatibleAdapter,
 };
 use relay_adapter::{Adapter, AdapterExt, Headers};
 use relay_protocol::{
@@ -131,6 +132,16 @@ fn ollama_cloud_chat_completions_exchange() {
         &OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
             .api_key("sk-test")
             .without_tool_choice(),
+        "gemma4:31b",
+        StopReason::EndTurn,
+    );
+}
+
+#[test]
+fn ollama_cloud_adapter_exchange() {
+    check(
+        "ollama",
+        &OllamaCloudAdapter::new("sk-test"),
         "gemma4:31b",
         StopReason::EndTurn,
     );

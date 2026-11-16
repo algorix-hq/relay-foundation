@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Provider endpoint, authentication, request construction, and sole ownership of provider error normalization for OpenAI, Anthropic, and OpenAI Compatible."
+description = "Provider endpoint, authentication, request construction, and sole ownership of provider error normalization for OpenAI, Anthropic, OpenAI Compatible, and Ollama Cloud."
 
 [dependencies]
 relay-protocol.workspace = true

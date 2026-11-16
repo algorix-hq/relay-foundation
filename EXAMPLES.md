@@ -192,7 +192,7 @@ Without allowed loss, encoding returns `BridgeError::Conversion` at the first un
 use std::sync::Arc;
 use relay_adapter::AdapterExt;
 use relay_adapter::providers::{
-    anthropic::AnthropicAdapter, openai::OpenAiAdapter,
+    anthropic::AnthropicAdapter, ollama_cloud::OllamaCloudAdapter, openai::OpenAiAdapter,
     openai_compatible::OpenAiCompatibleAdapter,
 };
 use relay_bridge::{ChatCompletionsBridge, LossScope};
@@ -203,7 +203,7 @@ let openai_chat = OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/c
     .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
 let anthropic = AnthropicAdapter::new("KEY")
     .allow_loss([LossScope::Sampling, LossScope::ImageDetail]);
-let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions").api_key("KEY");
+let ollama = OllamaCloudAdapter::new("KEY");
 
 let (provider_request, losses) = anthropic.build_request(&request)?;
 ```
@@ -738,7 +738,7 @@ Provider adapters live under `relay_adapter::providers`. Each ships the provider
 ```rust
 use std::sync::Arc;
 use relay_adapter::providers::{
-    anthropic::AnthropicAdapter, openai::OpenAiAdapter,
+    anthropic::AnthropicAdapter, ollama_cloud::OllamaCloudAdapter, openai::OpenAiAdapter,
     openai_compatible::OpenAiCompatibleAdapter,
 };
 use relay_bridge::{ChatCompletionsBridge, LossScope, ResponsesBridge};
@@ -760,9 +760,10 @@ let chat = OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completi
     .api_key("openai-key")
     .with_bridge(Arc::new(ChatCompletionsBridge::new()))?;
 
-let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
-    .api_key("ollama-key")
-    .models_url("https://ollama.com/v1/models")
+let ollama = OllamaCloudAdapter::new("ollama-key");
+let self_hosted = OpenAiCompatibleAdapter::new("https://llm.example.com/v1/chat/completions")
+    .api_key("self-hosted-key")
+    .models_url("https://llm.example.com/v1/models")
     .without_tool_choice();
 let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/responses")
     .with_bridge(Arc::new(ResponsesBridge::new()))?;

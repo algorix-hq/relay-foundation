@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use super::openai;
 use crate::{
-    Adapter, BaseAdapter, Conversion, FrameDecoder, Headers, ModelDiscovery, ProviderRequest,
+    Adapter, BaseAdapter, Classify, Conversion, FrameDecoder, Headers, ModelDiscovery,
+    ProviderRequest,
 };
 
 /// `new` takes the full request URL. Defaults to Chat Completions with
@@ -28,14 +29,22 @@ pub struct OpenAiCompatibleAdapter {
 
 impl OpenAiCompatibleAdapter {
     pub fn new(url: impl Into<String>) -> Self {
+        Self::from_parts(
+            url,
+            Arc::new(ChatCompletionsBridge::with_max_tokens_field(
+                MaxTokensField::MaxTokens,
+            )),
+            openai::error::classify,
+        )
+    }
+
+    pub(in crate::providers) fn from_parts(
+        url: impl Into<String>,
+        bridge: Arc<ChatCompletionsBridge>,
+        classify: Classify,
+    ) -> Self {
         Self {
-            inner: BaseAdapter::new(
-                Arc::new(ChatCompletionsBridge::with_max_tokens_field(
-                    MaxTokensField::MaxTokens,
-                )),
-                url,
-                openai::error::classify,
-            ),
+            inner: BaseAdapter::new(bridge, url, classify),
             models_url: None,
             without_tool_choice: false,
         }
@@ -47,10 +56,18 @@ impl OpenAiCompatibleAdapter {
         self
     }
 
-    pub fn with_bridge(mut self, bridge: Arc<dyn Bridge>) -> Result<Self, ConfigurationError> {
+    pub fn with_bridge(self, bridge: Arc<dyn Bridge>) -> Result<Self, ConfigurationError> {
+        self.with_bridge_formats(bridge, &[ApiFormat::CHAT_COMPLETIONS, ApiFormat::RESPONSES])
+    }
+
+    pub(in crate::providers) fn with_bridge_formats(
+        mut self,
+        bridge: Arc<dyn Bridge>,
+        supported_formats: &[ApiFormat],
+    ) -> Result<Self, ConfigurationError> {
         self.inner
             .conversion
-            .replace_bridge(bridge, &[ApiFormat::CHAT_COMPLETIONS, ApiFormat::RESPONSES])?;
+            .replace_bridge(bridge, supported_formats)?;
         Ok(self)
     }
 

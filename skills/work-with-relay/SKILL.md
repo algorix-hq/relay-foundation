@@ -1,6 +1,6 @@
 ---
 name: work-with-relay
-description: Use relay-foundation crates (`relay_protocol`, `relay_bridge`, `relay_adapter`, `relay_client`, `relay_catalog`) from a consumer codebase. Covers bridging Chat Completions, Responses, and Messages; OpenAI, Anthropic, and OpenAI-compatible adapters; client transports; streaming; errors; and custom adapters. Use it when code depends on a `relay_*` crate or the user wants to use Relay.
+description: Use relay-foundation crates (`relay_protocol`, `relay_bridge`, `relay_adapter`, `relay_client`, `relay_catalog`) from a consumer codebase. Covers bridging Chat Completions, Responses, and Messages; OpenAI, Anthropic, Ollama Cloud, and OpenAI-compatible adapters; client transports; streaming; errors; and custom adapters. Use it when code depends on a `relay_*` crate or the user wants to use Relay.
 ---
 
 # Working with Relay
@@ -11,7 +11,7 @@ Relay converts LLM API traffic, classifies provider failures, and offers a clien
 |---|---|
 | `relay-protocol` | Provider-neutral data: `Request`, `Response`, `StreamEvent`, `relay_protocol::Error` |
 | `relay-bridge` | One API format each: decode/encode requests, responses, and streams. Built-ins: `ChatCompletionsBridge`, `ResponsesBridge`, `MessagesBridge` |
-| `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins under `providers`: `openai::OpenAiAdapter` (Responses), `anthropic::AnthropicAdapter` (Messages), `openai_compatible::OpenAiCompatibleAdapter` (Chat Completions by default, or Responses), all built on `BaseAdapter` |
+| `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins under `providers`: `openai::OpenAiAdapter` (Responses), `anthropic::AnthropicAdapter` (Messages), `openai_compatible::OpenAiCompatibleAdapter` (Chat Completions by default, or Responses), `ollama_cloud::OllamaCloudAdapter` (Chat Completions, wraps `OpenAiCompatibleAdapter`), all built on `BaseAdapter` |
 | `relay-client` | `Client::generate`, `stream`, and `list_models` over a consumer-injected `Transport`; optional `ReqwestTransport` with feature `reqwest` |
 | `relay-catalog` | Catalog data types only: `Lab`, `Provider`, `Auth`, `Model`, `ProviderModel`, `ProviderModelAlias`, `Spec`, `Pricing`, and `validate`. No data, no fetching |
 
@@ -63,7 +63,7 @@ When you do, go straight to the file that owns the item instead of browsing:
 | Item | File |
 |---|---|
 | `Adapter`, `AdapterExt`, `FrameDecoder`, `ModelDiscovery`, `RejectedResponse` | `crates/relay-adapter/src/lib.rs` |
-| Provider adapters and their builder methods | `crates/relay-adapter/src/providers/{openai,anthropic,openai_compatible}/mod.rs` |
+| Provider adapters and their builder methods | `crates/relay-adapter/src/providers/{openai,anthropic,openai_compatible,ollama_cloud}/mod.rs` |
 | `BaseAdapter`, `Classify` | `crates/relay-adapter/src/base.rs` |
 | `AdapterStream`, `Transcoder`, `Outcome` | `crates/relay-adapter/src/stream.rs` |
 | `ErrorEncoder`, `Stage`, `EncodedError` / built-in encoders | `crates/relay-adapter/src/error.rs` / `encoders.rs` |

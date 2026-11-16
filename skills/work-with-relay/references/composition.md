@@ -23,7 +23,8 @@
 | OpenAI Responses | `OpenAiAdapter::new(key)` | Responses (fixed) |
 | OpenAI Chat Completions | `OpenAiCompatibleAdapter::new("https://api.openai.com/v1/chat/completions").api_key(key).with_bridge(Arc::new(ChatCompletionsBridge::new()))?` | Chat Completions with `max_completion_tokens` |
 | Anthropic | `AnthropicAdapter::new(key)` | Messages (fixed) |
-| Ollama or other compatible server | `OpenAiCompatibleAdapter::new(full_url).api_key(key)` | Chat Completions with `max_tokens`; `with_bridge` accepts a Chat Completions or Responses bridge |
+| Ollama Cloud | `OllamaCloudAdapter::new(key)` | Chat Completions with `max_tokens` and `ReasoningField::Reasoning`; `with_bridge` accepts Chat Completions only |
+| Local Ollama or other compatible server | `OpenAiCompatibleAdapter::new(full_url).api_key(key)` | Chat Completions with `max_tokens`; `with_bridge` accepts a Chat Completions or Responses bridge |
 
 The client bridge and the adapter's bridge are separate objects. `Conversion::new` and `with_bridge` check that the adapter's bridge format is one the adapter supports, and return `ConfigurationError` otherwise.
 
@@ -32,7 +33,7 @@ The client bridge and the adapter's bridge are separate objects. `Conversion::ne
 ```rust
 use std::sync::Arc;
 use relay_adapter::providers::{
-    anthropic::AnthropicAdapter, openai::OpenAiAdapter,
+    anthropic::AnthropicAdapter, ollama_cloud::OllamaCloudAdapter, openai::OpenAiAdapter,
     openai_compatible::OpenAiCompatibleAdapter,
 };
 use relay_bridge::{ChatCompletionsBridge, LossScope, ResponsesBridge};
@@ -49,16 +50,19 @@ let openai = OpenAiAdapter::new(key)
     .project("proj-...")
     .store(false);
 
-let ollama = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions") // full URL
+let ollama = OllamaCloudAdapter::new(key);     // https://ollama.com/v1; list_models enabled;
+                                                // tool_choice rejected; reasoning read from `reasoning`
+
+let self_hosted = OpenAiCompatibleAdapter::new("https://llm.example.com/v1/chat/completions") // full URL
     .api_key(key)
-    .models_url("https://ollama.com/v1/models") // enables list_models
-    .without_tool_choice();                     // server rejects tool_choice; requests that set it fail early
+    .models_url("https://llm.example.com/v1/models") // enables list_models
+    .without_tool_choice();                     // server ignores tool_choice; requests that set it fail early
 
 let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/responses")
     .with_bridge(Arc::new(ResponsesBridge::new()))?;
 ```
 
-All three built-ins also have `allow_loss`, `with_id_generator`, and `with_clock`. The Anthropic Messages API requires an output limit; without `default_max_tokens` a request lacking `max_output_tokens` fails conversion.
+All built-ins also have `allow_loss`, `with_id_generator`, and `with_clock`. The Anthropic Messages API requires an output limit; without `default_max_tokens` a request lacking `max_output_tokens` fails conversion.
 
 Bridge constructors with options: `ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)` (`relay_bridge::chat_completions::MaxTokensField`), `MessagesBridge::with_default_max_tokens(n)`, `ResponsesBridge::with_config(ResponsesBridgeConfig { store: Some(false) })` (`relay_bridge::responses::ResponsesBridgeConfig`).
 
