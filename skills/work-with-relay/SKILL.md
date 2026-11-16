@@ -1,20 +1,23 @@
 ---
 name: work-with-relay
-description: Use relay-foundation crates (`relay_protocol`, `relay_bridge`, `relay_adapter`, `relay_catalog`) from a consumer codebase. Covers bridging Chat Completions, Responses, and Messages; OpenAI, Anthropic, and OpenAI-compatible adapters; streaming; errors; and custom adapters. Use it when code depends on a `relay_*` crate or the user wants to use Relay.
+description: Use relay-foundation crates (`relay_protocol`, `relay_bridge`, `relay_adapter`, `relay_client`, `relay_catalog`) from a consumer codebase. Covers bridging Chat Completions, Responses, and Messages; OpenAI, Anthropic, and OpenAI-compatible adapters; client transports; streaming; errors; and custom adapters. Use it when code depends on a `relay_*` crate or the user wants to use Relay.
 ---
 
 # Working with Relay
 
-Relay has three Rust crates that convert LLM API traffic and a separate catalog types crate. It never makes network calls: the consumer owns HTTP, the async runtime, retries, and cancellation. Relay turns bytes into typed values and back, and classifies provider failures.
+Relay converts LLM API traffic, classifies provider failures, and offers a client over an injected transport plus a separate catalog types crate. Default builds have no HTTP client or async runtime; `relay-client` offers an opt-in `reqwest` transport. The consumer owns runtime choice, retries, timeouts, fallback, and cancellation policy.
 
 | Crate | Owns |
 |---|---|
 | `relay-protocol` | Provider-neutral data: `Request`, `Response`, `StreamEvent`, `relay_protocol::Error` |
 | `relay-bridge` | One API format each: decode/encode requests, responses, and streams. Built-ins: `ChatCompletionsBridge`, `ResponsesBridge`, `MessagesBridge` |
 | `relay-adapter` | One provider endpoint each: URL, auth headers, provider error classification, framing. Built-ins under `providers`: `openai::OpenAiAdapter` (Responses), `anthropic::AnthropicAdapter` (Messages), `openai_compatible::OpenAiCompatibleAdapter` (Chat Completions by default, or Responses), all built on `BaseAdapter` |
+| `relay-client` | `Client::generate`, `stream`, and `list_models` over a consumer-injected `Transport`; optional `ReqwestTransport` with feature `reqwest` |
 | `relay-catalog` | Catalog data types only: `Lab`, `Provider`, `Auth`, `Model`, `ProviderModel`, `ProviderModelAlias`, `Spec`, `Pricing`, and `validate`. No data, no fetching |
 
 A gateway uses two bridges. The **client bridge** matches the API the gateway's caller speaks. The adapter carries its own **provider bridge** for the API the provider speaks. They are independent: a Chat Completions client can be served by an Anthropic adapter.
+
+Prefer `relay-client` when you want normalized responses or events without driving the adapter/HTTP loop yourself. Drive the adapter directly when you need raw provider bytes, such as gateway stream re-encoding with `Transcoder`. See `references/client.md`.
 
 ```
 client bytes ─ client.decode_request ─▶ Request ─ adapter.build_request ─▶ ProviderRequest ─▶ consumer HTTP
@@ -31,7 +34,7 @@ These come from the library's design. Code that breaks them usually compiles but
 3. **Conversion is strict by default.** Anything the target format cannot express returns `ConversionError` (`Unrepresentable`, `Invalid`, or `Unsupported`). Do not pre-strip fields to make conversion succeed. If dropping is acceptable, allow it explicitly with `LossScope` and log or return every `ConversionLoss` you get back. See `references/errors.md`.
 4. **Keep the decoded client `Request`.** `encode_response` and the stream encoder need the same `Request` the client bridge decoded at ingress.
 5. **Relay never synthesizes completion.** A stream that fails ends with an error, not a fake `Stop`. On transport failure or client cancellation, drop the stream or transcoder without calling `finish`. Call `finish` only at a normal end of the provider body.
-6. **Transport and cancellation are consumer errors.** `relay_protocol::Error` has no transport variant. Wrap `relay_protocol::Error` with your HTTP client's error in your own enum.
+6. **Transport failures stay separate.** `relay_protocol::Error` has no transport variant. `relay-client::ClientError` distinguishes `Protocol` and `Transport`; when driving an adapter directly, use your own wrapper. Dropping a client future or event stream cancels it without a synthesized error.
 7. **Protocol stays provider-neutral.** Do not add provider-specific fields to `Request` or `Response`, and do not branch on provider names when building them. Provider settings go on the adapter or bridge constructor (for example `AnthropicAdapter::version`, `OpenAiAdapter::store`).
 8. **Relay ships catalog types but no catalog data.** `relay-catalog` describes models, providers, specs, and prices; the consumer owns the data, its source, refresh, and caching. Bridges and adapters never read the catalog, so pre-checking a request against catalog data is consumer code. Use required `Provider.auth` (`Byok` or `Subscription`) for credential selection and match required `api_formats` strings against the bridge's `ApiFormat` in consumer code. `ProviderModelAlias` has no canonical model link; send its `upstream_slug`, and treat optional `models` as possible routing targets, not the model that served a request. A missing catalog field means "not verified" and must not by itself block a request. `Model.spec` is display-only; use `ProviderModel.spec` for request decisions. `spec.reasoning` is `false` (verified unsupported) or an object with optional `effort: {levels, default_level}`, `budget: {min, max}`, and `display`; `true` is rejected.
 9. **Respond to clients with the client format's error encoder.** Use `ChatCompletionsErrors`, `ResponsesErrors`, or `MessagesErrors` matching the client bridge, with `encode_error` before the response starts and `encode_stream_error` after.
@@ -44,6 +47,7 @@ Read only what the task needs. The references give exact type names, method sign
 |---|---|
 | Add or upgrade the dependency | `references/dependency.md` |
 | Build or read `Request`, `Response`, `StreamEvent` values | `references/protocol.md` |
+| Generate, stream, or list models with an injected transport or `ReqwestTransport` | `references/client.md` |
 | Wire a client bridge to an adapter, non-streaming or streaming, plus HTTP glue | `references/composition.md` |
 | Select Chat Completions `reasoning_content` or `reasoning` for history, responses, and streams | `references/composition.md`, `references/errors.md` |
 | Map errors to client responses, allow or report losses, know what a format cannot express | `references/errors.md` |
@@ -64,6 +68,8 @@ When you do, go straight to the file that owns the item instead of browsing:
 | `AdapterStream`, `Transcoder`, `Outcome` | `crates/relay-adapter/src/stream.rs` |
 | `ErrorEncoder`, `Stage`, `EncodedError` / built-in encoders | `crates/relay-adapter/src/error.rs` / `encoders.rs` |
 | `Headers`, `Method`, `ProviderRequest` | `crates/relay-adapter/src/http.rs` |
+| `Client`, `Transport`, `TransportResponse`, `Generated`, `EventStream`, `ClientError` | `crates/relay-client/src/lib.rs` |
+| `ReqwestTransport` | `crates/relay-client/src/reqwest.rs` |
 | `SseDecoder` | `crates/relay-adapter/src/sse.rs` |
 | `Bridge`, `StreamDecoder`, `StreamEncoder`, `ConversionOptions`, `LossScope`, `ApiFormat` | `crates/relay-bridge/src/lib.rs` |
 | Per-format encode rules | `crates/relay-bridge/src/{chat_completions,responses,messages}/request.rs` |

@@ -1,0 +1,25 @@
+[package]
+name = "relay-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Adapter-driven generation, streaming, and model discovery over an injected transport."
+
+[features]
+default = []
+reqwest = ["dep:reqwest", "dep:futures-util"]
+
+[dependencies]
+relay-protocol.workspace = true
+relay-adapter.workspace = true
+futures-core = "0.3"
+reqwest = { version = "0.13", optional = true, default-features = false, features = ["rustls", "http2", "stream"] }
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
+
+[dev-dependencies]
+futures-executor = "0.3"
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/relay-protocol", "crates/relay-bridge", "crates/relay-adapter", "crates/relay-catalog"]
+members = ["crates/relay-protocol", "crates/relay-bridge", "crates/relay-adapter", "crates/relay-client", "crates/relay-catalog"]
 resolver = "3"
 
 [workspace.package]
@@ -12,6 +12,7 @@ repository = "https://github.com/algorix-hq/relay-foundation"
 relay-protocol = { path = "crates/relay-protocol", version = "0.0.0" }
 relay-bridge = { path = "crates/relay-bridge", version = "0.0.0" }
 relay-adapter = { path = "crates/relay-adapter", version = "0.0.0" }
+relay-client = { path = "crates/relay-client", version = "0.0.0" }
 relay-catalog = { path = "crates/relay-catalog", version = "0.0.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

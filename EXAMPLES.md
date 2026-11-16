@@ -770,6 +770,8 @@ let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/re
 
 ## Consumer HTTP transport
 
+`relay-client` (section 4) runs this loop for you. Use the adapter directly, as below, when you need the raw provider bytes, for example to re-encode a stream for a gateway client with `Transcoder`.
+
 ```rust
 use relay_adapter::{Headers, Method, ProviderRequest};
 use relay_protocol::Error;
@@ -1203,7 +1205,139 @@ assert_eq!(context.response_id.as_deref(), Some("response-fallback"));
 assert_eq!(context.observed_at, 1235);
 ```
 
-# 4. Error outcomes
+# 4. Client (`relay-client`)
+
+## Using the reqwest transport
+
+```toml
+relay-client = { git = "https://github.com/algorix-hq/relay-foundation", rev = "<commit>", features = ["reqwest"] }
+```
+
+Use the same full commit SHA for every Relay dependency. The opt-in feature supplies HTTP transport; the application still supplies the async runtime.
+
+```rust
+use std::sync::Arc;
+use relay_adapter::providers::anthropic::AnthropicAdapter;
+use relay_client::{Client, ReqwestTransport};
+
+let client = Client::new(
+    Arc::new(AnthropicAdapter::new("anthropic-key").default_max_tokens(4096)),
+    Arc::new(ReqwestTransport::new()),
+);
+```
+
+Use `ReqwestTransport::with_client(http)` to reuse a configured `reqwest::Client`. Reqwest preserves duplicate header values in order, but its `HeaderMap` does not guarantee global ordering across header names.
+
+## Implementing a Transport
+
+Without the feature, `relay-client` has no HTTP client or async runtime dependency. Inject your own `Transport` to use another HTTP stack or control transport behavior. This manual implementation illustrates the boundary with an application-owned reqwest client:
+
+```rust
+use futures_core::future::BoxFuture;
+use futures_util::StreamExt;
+use relay_adapter::{Headers, Method, ProviderRequest};
+use relay_client::{BoxError, Transport, TransportResponse};
+
+struct ApplicationTransport(reqwest::Client);
+
+impl Transport for ApplicationTransport {
+    fn send(&self, request: ProviderRequest) -> BoxFuture<'_, Result<TransportResponse, BoxError>> {
+        Box::pin(async move {
+            let method = match request.method {
+                Method::Get => reqwest::Method::GET,
+                Method::Post => reqwest::Method::POST,
+            };
+            let mut builder = self.0.request(method, request.url).body(request.body);
+            for (name, value) in request.headers.0 {
+                builder = builder.header(name, value);
+            }
+            let response = builder.send().await?;
+            let status = response.status().as_u16();
+            let mut headers = Vec::new();
+            for (name, value) in response.headers() {
+                headers.push((name.to_string(), value.to_str()?.to_owned()));
+            }
+            let body = Box::pin(response.bytes_stream().map(|item| {
+                item.map(|bytes| bytes.to_vec()).map_err(BoxError::from)
+            }));
+            Ok(TransportResponse { status, headers: Headers(headers), body })
+        })
+    }
+}
+```
+
+`Transport::send` returns a `Send` boxed future. The body is a `Send`, owned `BoxStream<'static, Result<Vec<u8>, BoxError>>`; dropping either must cancel transport work.
+
+## Generating a response
+
+Using `request` from section 1:
+
+```rust
+let generated = client.generate(&request).await?;
+for loss in &generated.losses { eprintln!("request omitted: {loss}"); }
+let response = generated.response;
+```
+
+`generate` clones the request and clears `delivery`, forcing a non-streaming request without modifying the caller's value. `Generated` contains the parsed `relay_protocol::Response` and request conversion losses.
+
+## Streaming
+
+```rust
+use futures_util::StreamExt;
+use relay_protocol::StreamEvent;
+
+let mut stream = client.stream(&request).await?;
+for loss in stream.losses() { eprintln!("request omitted: {loss}"); }
+while let Some(item) = stream.next().await {
+    match item? {
+        StreamEvent::Delta { index, delta } => println!("{index}: {delta:?}"),
+        StreamEvent::Stop { stop_reason, .. } => println!("stopped: {stop_reason:?}"),
+        _ => {}
+    }
+}
+```
+
+`stream` forces `delivery.stream = true`, keeping the caller's `stream_usage` when delivery is present and defaulting it to `true` otherwise. It returns after successful response headers arrive. A rejected status is classified from its body and returned as `ClientError::Protocol(Error::Provider(..))` before any event. A body read failure is `ClientError::Transport`, including while reading a rejected response.
+
+The stream ends after its first error, preserves earlier events, and never synthesizes completion. Normal EOF without the format's required termination yields `Error::IncompleteStream`.
+
+## Listing models
+
+```rust
+let mut cursor = None;
+loop {
+    let page = client.list_models(cursor.as_deref()).await?;
+    for model_id in &page.model_ids { println!("{model_id}"); }
+    let Some(next) = page.next_cursor else { break };
+    cursor = Some(next);
+}
+```
+
+The result is `relay_adapter::ModelPage`. An adapter without discovery returns `ClientError::Protocol(Error::UnsupportedOperation(..))`, not an empty page.
+
+## Branching on ClientError
+
+```rust
+use relay_client::ClientError;
+use relay_protocol::{Error, ProviderErrorCategory};
+
+match client.generate(&request).await {
+    Ok(generated) => println!("{:?}", generated.response.stop_reason),
+    Err(ClientError::Protocol(Error::Provider(error)))
+        if error.category == ProviderErrorCategory::RateLimited =>
+    {
+        eprintln!("rate limited, retry after {:?}", error.retry_after);
+    }
+    Err(ClientError::Protocol(error)) => eprintln!("relay: {error}"),
+    Err(ClientError::Transport(error)) => eprintln!("transport: {error}"),
+}
+```
+
+`ClientError::Protocol` carries the same `relay_protocol::Error` as the adapter API. `ClientError::Transport` carries the transport's original error, including body-read failures. Both expose the inner error through `std::error::Error::source`.
+
+The client sends each request once, without retry, timeout, or fallback. The consumer owns those policies and any transport-level configuration. Dropping a future or `EventStream` cancels the request without calling `finish` or synthesizing a cancellation event.
+
+# 5. Error outcomes
 
 ```json
 [
@@ -1227,7 +1361,7 @@ assert_eq!(context.observed_at, 1235);
 ]
 ```
 
-# 5. Catalog (`relay-catalog`)
+# 6. Catalog (`relay-catalog`)
 
 ## Loading and validating
 
