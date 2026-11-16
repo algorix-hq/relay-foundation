@@ -499,14 +499,14 @@ if let StopReason::Other(value) = &response.stop_reason {
 {"type": "stop", "stop_reason": "tool_use", "usage": {"input_tokens": 20, "output_tokens": 9}}
 ```
 
-## Branching on RelayError
+## Branching on `relay_protocol::Error`
 
 ```rust
-use relay_protocol::{ProviderErrorCategory, RelayError};
+use relay_protocol::{ProviderErrorCategory, Error};
 
-fn describe(error: &RelayError) -> String {
+fn describe(error: &Error) -> String {
     match error {
-        RelayError::Provider(error) => {
+        Error::Provider(error) => {
             let category = match error.category {
                 ProviderErrorCategory::Authentication => "authentication",
                 ProviderErrorCategory::PermissionDenied => "permission",
@@ -522,11 +522,11 @@ fn describe(error: &RelayError) -> String {
             };
             format!("{category}: {}, retry after: {:?}", error.message, error.retry_after)
         }
-        RelayError::Conversion(error) => format!("conversion {}: {}", error.path, error),
-        RelayError::Decode(error) => format!("decode {}: {}", error.path, error),
-        RelayError::IncompleteStream(error) => format!("incomplete: {error}"),
-        RelayError::Configuration(error) => format!("configuration: {error}"),
-        RelayError::UnsupportedOperation(error) => format!("unsupported: {error}"),
+        Error::Conversion(error) => format!("conversion {}: {}", error.path, error),
+        Error::Decode(error) => format!("decode {}: {}", error.path, error),
+        Error::IncompleteStream(error) => format!("incomplete: {error}"),
+        Error::Configuration(error) => format!("configuration: {error}"),
+        Error::UnsupportedOperation(error) => format!("unsupported: {error}"),
     }
 }
 ```
@@ -763,16 +763,16 @@ let local_responses = OpenAiCompatibleAdapter::new("http://localhost:11434/v1/re
 
 ```rust
 use relay_adapter::{Headers, Method, ProviderRequest};
-use relay_protocol::RelayError;
+use relay_protocol::Error;
 
 #[derive(Debug)]
 enum GatewayError {
-    Relay(RelayError),
+    Relay(Error),
     Transport(Box<dyn std::error::Error + Send + Sync>),
     Cancelled,
 }
-impl From<RelayError> for GatewayError {
-    fn from(error: RelayError) -> Self { Self::Relay(error) }
+impl From<Error> for GatewayError {
+    fn from(error: Error) -> Self { Self::Relay(error) }
 }
 impl From<relay_bridge::BridgeError> for GatewayError {
     fn from(error: relay_bridge::BridgeError) -> Self { Self::Relay(error.into()) }
@@ -889,13 +889,13 @@ match &report.outcome {
 
 ```rust
 use relay_adapter::AdapterStream;
-use relay_protocol::{RelayError, StreamEvent};
+use relay_protocol::{Error, StreamEvent};
 
 async fn collect_before_reply(
     mut response: reqwest::Response,
     mut stream: AdapterStream,
     cancelled: impl Fn() -> bool,
-) -> Result<(Vec<StreamEvent>, Option<RelayError>), GatewayError> {
+) -> Result<(Vec<StreamEvent>, Option<Error>), GatewayError> {
     let mut events = Vec::new();
     loop {
         if cancelled() { return Err(GatewayError::Cancelled); }
@@ -932,13 +932,13 @@ let stream_error = responses_errors.encode_stream_error(&error);
 ```rust
 use relay_adapter::{EncodedError, ErrorEncoder, Stage};
 use relay_bridge::{Bridge, ConversionOptions};
-use relay_protocol::RelayError;
+use relay_protocol::Error;
 
 fn ingress_error(client: &dyn Bridge, errors: &dyn ErrorEncoder, body: &[u8])
     -> Result<relay_protocol::Request, EncodedError>
 {
     client.decode_request(body).map_err(|error| {
-        errors.encode_error(&RelayError::from(error), Stage::Request)
+        errors.encode_error(&Error::from(error), Stage::Request)
     })
 }
 
@@ -949,10 +949,10 @@ let encoded = client.encode_response(&input, &output, &ConversionOptions::defaul
 ```
 ```rust
 use relay_adapter::ErrorEncoder;
-use relay_protocol::RelayError;
+use relay_protocol::Error;
 
 fn frames_for_failure(
-    errors: &dyn ErrorEncoder, error: &RelayError,
+    errors: &dyn ErrorEncoder, error: &Error,
 ) -> Vec<relay_bridge::Frame> {
     errors.encode_stream_error(error)
 }

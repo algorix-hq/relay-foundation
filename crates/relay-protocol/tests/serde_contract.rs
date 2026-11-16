@@ -1,8 +1,8 @@
 use relay_protocol::{
     AssistantContent, CacheControl, ConfigurationError, ConversionError, ConversionErrorKind,
-    DecodeError, IncompleteStream, Message, MetadataScope, ProviderError, ProviderErrorCategory,
-    ReasoningEffort, RelayError, Request, Response, ResponseFormat, RetryAfter, StopReason,
-    StreamEvent, StreamItem, ToolChoice, UnsupportedOperation, UserContent,
+    DecodeError, Error, IncompleteStream, Message, MetadataScope, ProviderError,
+    ProviderErrorCategory, ReasoningEffort, Request, Response, ResponseFormat, RetryAfter,
+    StopReason, StreamEvent, StreamItem, ToolChoice, UnsupportedOperation, UserContent,
 };
 use serde_json::{Value, json};
 
@@ -373,9 +373,7 @@ fn diagnostics_preserve_provider_headers_and_conversion_locations() {
 
 #[test]
 fn relay_failures_preserve_tagged_causes_and_reject_unknown_fields() {
-    use std::error::Error;
-
-    let cases: [(RelayError, Value, &str); 6] = [
+    let cases: [(Error, Value, &str); 6] = [
         (
             ProviderError {
                 category: ProviderErrorCategory::Unknown,
@@ -437,12 +435,17 @@ fn relay_failures_preserve_tagged_causes_and_reject_unknown_fields() {
     for (error, wire, source) in cases {
         assert_eq!(serde_json::to_value(&error).unwrap(), wire);
         assert_eq!(
-            serde_json::from_value::<RelayError>(wire.clone()).unwrap(),
+            serde_json::from_value::<Error>(wire.clone()).unwrap(),
             error
         );
-        assert_eq!(error.source().expect("preserved cause").to_string(), source);
+        assert_eq!(
+            std::error::Error::source(&error)
+                .expect("preserved cause")
+                .to_string(),
+            source
+        );
         let mut invalid = wire;
         invalid["extra"] = json!(true);
-        assert!(serde_json::from_value::<RelayError>(invalid).is_err());
+        assert!(serde_json::from_value::<Error>(invalid).is_err());
     }
 }

@@ -1,5 +1,5 @@
 use relay_bridge::Frame;
-use relay_protocol::RelayError;
+use relay_protocol::Error;
 
 use crate::Headers;
 
@@ -8,10 +8,10 @@ use crate::Headers;
 /// the client format's own request-ID header. Retry-After dates remain verbatim.
 pub trait ErrorEncoder: Send + Sync {
     /// Encodes an error before the client response has started.
-    fn encode_error(&self, error: &RelayError, stage: Stage) -> EncodedError;
+    fn encode_error(&self, error: &Error, stage: Stage) -> EncodedError;
 
     /// Encodes an error after the client stream has started.
-    fn encode_stream_error(&self, error: &RelayError) -> Vec<Frame>;
+    fn encode_stream_error(&self, error: &Error) -> Vec<Frame>;
 }
 
 /// A conversion failure during client request decoding (`Request`) versus result

@@ -2,8 +2,8 @@ use std::fmt;
 
 use relay_bridge::Frame;
 use relay_protocol::{
-    ConfigurationError, ConversionLoss, DecodeError, ProviderError, ProviderErrorCategory,
-    RelayError, Request, Response, UnsupportedOperation,
+    ConfigurationError, ConversionLoss, DecodeError, Error, ProviderError, ProviderErrorCategory,
+    Request, Response, UnsupportedOperation,
 };
 use serde_json::Value;
 
@@ -80,14 +80,14 @@ pub trait AdapterExt: Adapter {
     fn build_request(
         &self,
         request: &Request,
-    ) -> Result<(ProviderRequest, Vec<ConversionLoss>), RelayError>;
+    ) -> Result<(ProviderRequest, Vec<ConversionLoss>), Error>;
 
     fn parse_response(
         &self,
         status: u16,
         headers: &Headers,
         body: &[u8],
-    ) -> Result<Response, RelayError>;
+    ) -> Result<Response, Error>;
 
     /// A rejected response must be classified after the consumer reads its body.
     fn open_stream(
@@ -96,21 +96,17 @@ pub trait AdapterExt: Adapter {
         headers: &Headers,
     ) -> Result<AdapterStream, RejectedResponse<'_>>;
 
-    fn list_models(&self, cursor: Option<&str>) -> Result<ProviderRequest, RelayError>;
+    fn list_models(&self, cursor: Option<&str>) -> Result<ProviderRequest, Error>;
 
-    fn parse_models(
-        &self,
-        status: u16,
-        headers: &Headers,
-        body: &[u8],
-    ) -> Result<ModelPage, RelayError>;
+    fn parse_models(&self, status: u16, headers: &Headers, body: &[u8])
+    -> Result<ModelPage, Error>;
 }
 
 impl<A: Adapter + ?Sized> AdapterExt for A {
     fn build_request(
         &self,
         request: &Request,
-    ) -> Result<(ProviderRequest, Vec<ConversionLoss>), RelayError> {
+    ) -> Result<(ProviderRequest, Vec<ConversionLoss>), Error> {
         self.validate_request(request)?;
         let conversion = self.conversion();
         let encoded = conversion
@@ -129,7 +125,7 @@ impl<A: Adapter + ?Sized> AdapterExt for A {
         status: u16,
         headers: &Headers,
         body: &[u8],
-    ) -> Result<Response, RelayError> {
+    ) -> Result<Response, Error> {
         let context = self.conversion().decode_context();
         check_response(self, status, headers, body)?;
         Ok(self.conversion().bridge().decode_response(body, &context)?)
@@ -161,7 +157,7 @@ impl<A: Adapter + ?Sized> AdapterExt for A {
         })
     }
 
-    fn list_models(&self, cursor: Option<&str>) -> Result<ProviderRequest, RelayError> {
+    fn list_models(&self, cursor: Option<&str>) -> Result<ProviderRequest, Error> {
         let discovery = self.model_discovery().ok_or_else(unsupported_discovery)?;
         Ok(discovery.build_list_models(cursor)?)
     }
@@ -171,7 +167,7 @@ impl<A: Adapter + ?Sized> AdapterExt for A {
         status: u16,
         headers: &Headers,
         body: &[u8],
-    ) -> Result<ModelPage, RelayError> {
+    ) -> Result<ModelPage, Error> {
         let discovery = self.model_discovery().ok_or_else(unsupported_discovery)?;
         check_response(self, status, headers, body)?;
         Ok(discovery.decode_models(body)?)
@@ -187,8 +183,8 @@ pub struct RejectedResponse<'a> {
 type RejectionClassifier<'a> = dyn FnOnce(&[u8]) -> ProviderError + Send + 'a;
 
 impl RejectedResponse<'_> {
-    /// Always returns `RelayError::Provider`, even for an empty or undecodable body.
-    pub fn classify(self, body: &[u8]) -> RelayError {
+    /// Always returns `Error::Provider`, even for an empty or undecodable body.
+    pub fn classify(self, body: &[u8]) -> Error {
         (self.classify)(body).into()
     }
 }

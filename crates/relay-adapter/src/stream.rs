@@ -1,7 +1,7 @@
 use std::{sync::Arc, vec};
 
 use relay_bridge::{Bridge, ConversionOptions, Frame, StreamDecoder, StreamEncoder};
-use relay_protocol::{ConversionLoss, DecodeError, RelayError, Request, StreamEvent};
+use relay_protocol::{ConversionLoss, DecodeError, Error, Request, StreamEvent};
 
 use crate::{ErrorEncoder, FrameDecoder, FrameItem};
 
@@ -14,10 +14,10 @@ pub struct AdapterStream {
     pub(crate) terminal: bool,
 }
 
-pub struct StreamItems(vec::IntoIter<Result<StreamEvent, RelayError>>);
+pub struct StreamItems(vec::IntoIter<Result<StreamEvent, Error>>);
 
 impl Iterator for StreamItems {
-    type Item = Result<StreamEvent, RelayError>;
+    type Item = Result<StreamEvent, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next()
@@ -46,7 +46,7 @@ impl AdapterStream {
         let mut events = Vec::new();
         let result = self
             .decode_frames(frames, framing, &mut events)
-            .and_then(|()| self.decoder.finish(&mut events).map_err(RelayError::from));
+            .and_then(|()| self.decoder.finish(&mut events).map_err(Error::from));
         self.items(events, result)
     }
 
@@ -73,7 +73,7 @@ impl AdapterStream {
         frames: Vec<FrameItem>,
         framing: Result<(), DecodeError>,
         events: &mut Vec<StreamEvent>,
-    ) -> Result<(), RelayError> {
+    ) -> Result<(), Error> {
         for frame in frames {
             match frame {
                 FrameItem::Data(frame) => self.decoder.push(frame, events)?,
@@ -83,7 +83,7 @@ impl AdapterStream {
         Ok(framing?)
     }
 
-    fn items(&mut self, events: Vec<StreamEvent>, result: Result<(), RelayError>) -> StreamItems {
+    fn items(&mut self, events: Vec<StreamEvent>, result: Result<(), Error>) -> StreamItems {
         let mut items: Vec<_> = events.into_iter().map(Ok).collect();
         if let Err(error) = result {
             self.terminal = true;
@@ -115,7 +115,7 @@ pub struct TranscodeReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Completed,
-    Failed(RelayError),
+    Failed(Error),
 }
 
 impl Transcoder {
@@ -155,7 +155,7 @@ impl Transcoder {
             let result = item.and_then(|event| {
                 self.encoder
                     .push(&event, &mut frames, &mut self.report.losses)
-                    .map_err(RelayError::from)
+                    .map_err(Error::from)
             });
             if let Err(error) = result {
                 self.fail(error, &mut frames);
@@ -165,7 +165,7 @@ impl Transcoder {
         frames
     }
 
-    fn fail(&mut self, error: RelayError, frames: &mut Vec<Frame>) {
+    fn fail(&mut self, error: Error, frames: &mut Vec<Frame>) {
         frames.extend(self.errors.encode_stream_error(&error));
         self.report.outcome = Some(Outcome::Failed(error));
     }

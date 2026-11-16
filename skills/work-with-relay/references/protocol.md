@@ -151,8 +151,8 @@ pub enum StreamDelta {
 }
 ```
 
-Order: `Start`, then items. Each item has `ItemStart`, then its metadata and deltas, then `ItemEnd`. Different items may interleave. `Stop` ends a normal stream. `Metadata` updates are partial; absent fields keep earlier values. Usage in `Metadata` is provisional; only `Stop.usage` is final. Failures never appear as events. They arrive as `Err(RelayError)` from `AdapterStream`.
+Order: `Start`, then items. Each item has `ItemStart`, then its metadata and deltas, then `ItemEnd`. Different items may interleave. `Stop` ends a normal stream. `Metadata` updates are partial; absent fields keep earlier values. Usage in `Metadata` is provisional; only `Stop.usage` is final. Failures never appear as events. They arrive as `Err(relay_protocol::Error)` from `AdapterStream`.
 
 ## Errors
 
-`RelayError` variants: `Provider(ProviderError)`, `Conversion(ConversionError)`, `Decode(DecodeError)`, `IncompleteStream(IncompleteStream)`, `Configuration(ConfigurationError)`, `UnsupportedOperation(UnsupportedOperation)`. Each inner type converts into `RelayError` with `From`. Details are in `errors.md`.
+`relay_protocol::Error` variants: `Provider(ProviderError)`, `Conversion(ConversionError)`, `Decode(DecodeError)`, `IncompleteStream(IncompleteStream)`, `Configuration(ConfigurationError)`, `UnsupportedOperation(UnsupportedOperation)`. Each inner type converts into `relay_protocol::Error` with `From`. Details are in `errors.md`.

@@ -13,8 +13,8 @@ use relay_bridge::{
 };
 use relay_protocol::{
     AssistantContent, ConfigurationError, ConversionError, ConversionErrorKind, ConversionLoss,
-    DecodeError, IncompleteStream, Message, ProviderError, ProviderErrorCategory, RelayError,
-    Request, Response, StopReason, StreamEvent, Timestamp, Version,
+    DecodeError, Error, IncompleteStream, Message, ProviderError, ProviderErrorCategory, Request,
+    Response, StopReason, StreamEvent, Timestamp, Version,
 };
 use serde_json::{Value, json};
 
@@ -349,7 +349,7 @@ impl FrameDecoder for TestFrameDecoder {
 struct TestErrorEncoder;
 
 impl ErrorEncoder for TestErrorEncoder {
-    fn encode_error(&self, error: &RelayError, stage: Stage) -> EncodedError {
+    fn encode_error(&self, error: &Error, stage: Stage) -> EncodedError {
         EncodedError {
             status: if stage == Stage::Request { 400 } else { 502 },
             headers: Headers::default(),
@@ -357,7 +357,7 @@ impl ErrorEncoder for TestErrorEncoder {
         }
     }
 
-    fn encode_stream_error(&self, error: &RelayError) -> Vec<Frame> {
+    fn encode_stream_error(&self, error: &Error) -> Vec<Frame> {
         vec![Frame {
             event: Some("relay-error".into()),
             data: error.to_string(),
@@ -476,7 +476,7 @@ fn gateway_converts_between_client_and_provider_formats() {
 
 #[test]
 fn incompatible_bridge_is_a_configuration_failure_naming_both_formats() {
-    let error: RelayError = Conversion::new(
+    let error: Error = Conversion::new(
         Arc::new(TestBridge::client()),
         &[ApiFormat::MESSAGES],
         ConversionOptions::default(),
@@ -484,7 +484,7 @@ fn incompatible_bridge_is_a_configuration_failure_naming_both_formats() {
     .err()
     .expect("incompatible")
     .into();
-    let RelayError::Configuration(error) = error else {
+    let Error::Configuration(error) = error else {
         panic!("expected configuration error")
     };
     assert!(error.message.contains("client-wire"));
@@ -503,7 +503,7 @@ fn provider_rejection_bypasses_response_decoding_even_on_success_status() {
     for (status, body) in [(503, b"not-json".as_slice()), (200, b"provider-failure")] {
         assert_eq!(
             adapter.parse_response(status, &headers, body),
-            Err(RelayError::Provider(ProviderError {
+            Err(Error::Provider(ProviderError {
                 http_status: Some(status),
                 request_id: Some("request-1".into()),
                 ..provider_failure()
@@ -528,7 +528,7 @@ fn confirmed_http_failure_never_becomes_a_decode_failure() {
             .parse_models(502, &Headers::default(), b"")
             .expect_err("discovery HTTP failure"),
     ] {
-        let RelayError::Provider(error) = error else {
+        let Error::Provider(error) = error else {
             panic!("expected provider failure")
         };
         assert_eq!(error.category, ProviderErrorCategory::Unknown);
@@ -544,7 +544,7 @@ fn confirmed_http_failure_never_becomes_a_decode_failure() {
 fn malformed_success_response_is_a_decode_failure() {
     assert!(matches!(
         TestAdapter::default().parse_response(200, &Headers::default(), b"not-json"),
-        Err(RelayError::Decode(_))
+        Err(Error::Decode(_))
     ));
 }
 
@@ -559,7 +559,7 @@ fn rejected_stream_is_classified_after_its_body_is_read() {
             Ok(_) => panic!("rejected status opened a stream"),
             Err(rejected) => rejected,
         };
-        let RelayError::Provider(error) = rejected.classify(b"") else {
+        let Error::Provider(error) = rejected.classify(b"") else {
             panic!("expected provider error")
         };
         assert_eq!(error.http_status, Some(429));
@@ -598,7 +598,7 @@ fn mid_stream_provider_failure_follows_data_and_keeps_header_request_id() {
                 },
                 model: None
             }),
-            Err(RelayError::Provider(ProviderError {
+            Err(Error::Provider(ProviderError {
                 request_id: Some("stream-request".into()),
                 ..provider_failure()
             })),
@@ -630,7 +630,7 @@ fn bridge_decode_failure_preserves_events_from_the_same_frame() {
             model: None
         })
     );
-    assert!(matches!(items[1], Err(RelayError::Decode(_))));
+    assert!(matches!(items[1], Err(Error::Decode(_))));
     assert!(stream.push(STOP).next().is_none());
     assert!(stream.finish().next().is_none());
 }
@@ -657,7 +657,7 @@ fn malformed_framing_preserves_preceding_frames() {
             model: None
         })
     );
-    assert!(matches!(items[1], Err(RelayError::Decode(_))));
+    assert!(matches!(items[1], Err(Error::Decode(_))));
 }
 
 #[test]
@@ -681,7 +681,7 @@ fn eof_flushes_buffered_events_then_reports_incomplete_stream_without_a_stop() {
             model: None
         })
     );
-    assert!(matches!(items[1], Err(RelayError::IncompleteStream(_))));
+    assert!(matches!(items[1], Err(Error::IncompleteStream(_))));
     assert!(stream.push(STOP).next().is_none());
     assert!(stream.finish().next().is_none());
 }
@@ -717,7 +717,7 @@ fn transcoder_emits_prior_frames_then_one_provider_error_and_stops() {
     );
     assert_eq!(
         transcoder.report().outcome,
-        Some(Outcome::Failed(RelayError::Provider(provider_failure())))
+        Some(Outcome::Failed(Error::Provider(provider_failure())))
     );
     assert!(transcoder.push(START).is_empty());
     assert!(transcoder.finish().is_empty());
@@ -745,7 +745,7 @@ fn transcoder_encodes_client_push_failure_after_partial_encoder_output() {
     );
     assert!(matches!(
         transcoder.report().outcome,
-        Some(Outcome::Failed(RelayError::Conversion(_)))
+        Some(Outcome::Failed(Error::Conversion(_)))
     ));
     assert!(transcoder.push(START).is_empty());
     assert!(transcoder.finish().is_empty());
@@ -778,7 +778,7 @@ fn transcoder_encodes_client_finish_failure_after_encoder_tail() {
     );
     assert!(matches!(
         transcoder.report().outcome,
-        Some(Outcome::Failed(RelayError::Conversion(_)))
+        Some(Outcome::Failed(Error::Conversion(_)))
     ));
     assert!(transcoder.finish().is_empty());
     assert!(transcoder.push(START).is_empty());
@@ -855,7 +855,7 @@ fn discovery_distinguishes_unsupported_empty_pages_and_provider_errors() {
             .parse_models(200, &Headers::default(), b"[]")
             .expect_err("unsupported"),
     ] {
-        let RelayError::UnsupportedOperation(error) = error else {
+        let Error::UnsupportedOperation(error) = error else {
             panic!("expected unsupported")
         };
         assert_eq!(error.operation, "list_models");
@@ -880,7 +880,7 @@ fn discovery_distinguishes_unsupported_empty_pages_and_provider_errors() {
     for (status, body) in [(429, b"not-json".as_slice()), (200, b"provider-failure")] {
         assert_eq!(
             adapter.parse_models(status, &Headers::default(), body),
-            Err(RelayError::Provider(ProviderError {
+            Err(Error::Provider(ProviderError {
                 http_status: Some(status),
                 ..provider_failure()
             }))
@@ -901,7 +901,7 @@ fn build_request_requires_loss_permission_and_returns_encode_losses() {
     let input = request;
     assert!(matches!(
         TestAdapter::default().build_request(&input),
-        Err(RelayError::Conversion(ConversionError {
+        Err(Error::Conversion(ConversionError {
             kind: ConversionErrorKind::Unrepresentable,
             ..
         }))

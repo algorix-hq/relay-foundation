@@ -1,5 +1,5 @@
 use relay_bridge::Frame;
-use relay_protocol::{ProviderErrorCategory as Category, RelayError, RetryAfter};
+use relay_protocol::{Error, ProviderErrorCategory as Category, RetryAfter};
 use serde_json::{Value, json};
 
 use crate::{EncodedError, ErrorEncoder, Headers, Stage};
@@ -34,11 +34,11 @@ macro_rules! encoder {
         }
 
         impl ErrorEncoder for $name {
-            fn encode_error(&self, error: &RelayError, stage: Stage) -> EncodedError {
+            fn encode_error(&self, error: &Error, stage: Stage) -> EncodedError {
                 Format::$format.encode(error, stage)
             }
 
-            fn encode_stream_error(&self, error: &RelayError) -> Vec<Frame> {
+            fn encode_stream_error(&self, error: &Error) -> Vec<Frame> {
                 vec![Format::$format.stream(error)]
             }
         }
@@ -50,9 +50,9 @@ encoder!(ResponsesErrors, Responses);
 encoder!(MessagesErrors, Messages);
 
 impl Format {
-    fn encode(self, error: &RelayError, stage: Stage) -> EncodedError {
+    fn encode(self, error: &Error, stage: Stage) -> EncodedError {
         let mut headers = Headers(vec![("content-type".into(), "application/json".into())]);
-        if let RelayError::Provider(provider) = error {
+        if let Error::Provider(provider) = error {
             if let Some(retry_after) = &provider.retry_after {
                 let value = match retry_after {
                     RetryAfter::Seconds { seconds } => seconds.to_string(),
@@ -73,9 +73,9 @@ impl Format {
         }
     }
 
-    fn status(self, error: &RelayError, stage: Stage) -> u16 {
+    fn status(self, error: &Error, stage: Stage) -> u16 {
         match error {
-            RelayError::Provider(provider) => match provider.category {
+            Error::Provider(provider) => match provider.category {
                 Category::Authentication => 401,
                 Category::PermissionDenied => 403,
                 Category::InsufficientQuota if matches!(self, Self::Messages) => 402,
@@ -89,23 +89,21 @@ impl Format {
                 Category::ServerError => 500,
                 Category::Unknown => provider.http_status.unwrap_or(502),
             },
-            RelayError::Conversion(_) if stage == Stage::Request => 400,
-            RelayError::Conversion(_) | RelayError::Decode(_) | RelayError::IncompleteStream(_) => {
-                502
-            }
-            RelayError::Configuration(_) => 500,
-            RelayError::UnsupportedOperation(_) => 501,
+            Error::Conversion(_) if stage == Stage::Request => 400,
+            Error::Conversion(_) | Error::Decode(_) | Error::IncompleteStream(_) => 502,
+            Error::Configuration(_) => 500,
+            Error::UnsupportedOperation(_) => 501,
         }
     }
 
-    fn body(self, error: &RelayError, stage: Stage) -> Value {
+    fn body(self, error: &Error, stage: Stage) -> Value {
         let category = match error {
-            RelayError::Provider(provider) => provider.category,
-            RelayError::Conversion(_) if stage == Stage::Request => Category::InvalidRequest,
+            Error::Provider(provider) => provider.category,
+            Error::Conversion(_) if stage == Stage::Request => Category::InvalidRequest,
             _ => Category::ServerError,
         };
         let message = match error {
-            RelayError::Provider(provider) => provider.message.clone(),
+            Error::Provider(provider) => provider.message.clone(),
             _ => error.to_string(),
         };
         if matches!(self, Self::Messages) {
@@ -141,7 +139,7 @@ impl Format {
         json!({"error":{"message":message, "type":kind, "code":code, "param":null}})
     }
 
-    fn stream(self, error: &RelayError) -> Frame {
+    fn stream(self, error: &Error) -> Frame {
         let mut body = self.body(error, Stage::Response);
         let event = match self {
             Self::ChatCompletions => None,

@@ -1,11 +1,11 @@
 use relay_adapter::{ChatCompletionsErrors, ErrorEncoder, MessagesErrors, ResponsesErrors, Stage};
 use relay_protocol::{
-    ConfigurationError, ConversionError, ConversionErrorKind, DecodeError, IncompleteStream,
-    ProviderError, ProviderErrorCategory as Category, RelayError, RetryAfter, UnsupportedOperation,
+    ConfigurationError, ConversionError, ConversionErrorKind, DecodeError, Error, IncompleteStream,
+    ProviderError, ProviderErrorCategory as Category, RetryAfter, UnsupportedOperation,
 };
 use serde_json::{Value, json};
 
-fn provider(category: Category, http_status: Option<u16>) -> RelayError {
+fn provider(category: Category, http_status: Option<u16>) -> Error {
     ProviderError {
         category,
         http_status,
@@ -176,7 +176,7 @@ fn local_failures_use_stage_only_for_conversion_and_remain_sdk_encodable() {
     for (format, encoder) in encoders() {
         for (error, request_status, response_status) in [
             (
-                RelayError::Conversion(ConversionError {
+                Error::Conversion(ConversionError {
                     kind: ConversionErrorKind::Invalid,
                     path: "/messages".into(),
                     message: "bad input".into(),
@@ -185,7 +185,7 @@ fn local_failures_use_stage_only_for_conversion_and_remain_sdk_encodable() {
                 502,
             ),
             (
-                RelayError::Decode(DecodeError {
+                Error::Decode(DecodeError {
                     path: "/content".into(),
                     message: "bad output".into(),
                 }),
@@ -193,21 +193,21 @@ fn local_failures_use_stage_only_for_conversion_and_remain_sdk_encodable() {
                 502,
             ),
             (
-                RelayError::IncompleteStream(IncompleteStream {
+                Error::IncompleteStream(IncompleteStream {
                     message: "no terminal event".into(),
                 }),
                 502,
                 502,
             ),
             (
-                RelayError::Configuration(ConfigurationError {
+                Error::Configuration(ConfigurationError {
                     message: "missing key".into(),
                 }),
                 500,
                 500,
             ),
             (
-                RelayError::UnsupportedOperation(UnsupportedOperation {
+                Error::UnsupportedOperation(UnsupportedOperation {
                     operation: "list_models".into(),
                     message: "not implemented".into(),
                 }),
@@ -227,7 +227,7 @@ fn local_failures_use_stage_only_for_conversion_and_remain_sdk_encodable() {
                 assert_eq!(body["error"]["message"], error.to_string());
                 assert_eq!(
                     body["error"]["type"],
-                    if matches!(error, RelayError::Conversion(_)) && stage == Stage::Request {
+                    if matches!(error, Error::Conversion(_)) && stage == Stage::Request {
                         "invalid_request_error"
                     } else if format == "messages" {
                         "api_error"
@@ -247,7 +247,7 @@ fn local_failures_use_stage_only_for_conversion_and_remain_sdk_encodable() {
 fn retry_dates_are_forwarded_verbatim_in_the_neutral_diagnostics_headers() {
     for (_, encoder) in encoders() {
         let mut error = provider(Category::RateLimited, Some(429));
-        let RelayError::Provider(provider) = &mut error else {
+        let Error::Provider(provider) = &mut error else {
             unreachable!()
         };
         provider.retry_after = Some(RetryAfter::HttpDate {

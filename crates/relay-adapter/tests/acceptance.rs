@@ -13,7 +13,7 @@ use relay_bridge::{
     Encoded, MessagesBridge, ResponsesBridge, StreamDecoder, StreamEncoder,
 };
 use relay_protocol::{
-    ConversionError, ConversionErrorKind, DecodeError, ProviderErrorCategory, RelayError, Request,
+    ConversionError, ConversionErrorKind, DecodeError, Error, ProviderErrorCategory, Request,
     Response, StreamEvent,
 };
 use serde_json::{Value, json};
@@ -160,7 +160,7 @@ fn builtin_adapter_uses_custom_bridge_bodies_but_keeps_provider_error_ownership(
     assert_eq!(classified.category, ProviderErrorCategory::Authentication);
     assert_eq!(
         adapter.parse_response(status, &headers, body),
-        Err(RelayError::Provider(classified))
+        Err(Error::Provider(classified))
     );
     assert_eq!(bridge.decoded_responses.load(Ordering::Relaxed), 1);
 }
@@ -191,7 +191,7 @@ fn dropping_partial_stream_preserves_events_without_errors_but_normal_eof_is_inc
     .expect("expected partial events");
     let expected: Vec<_> = expected.into_iter().map(Ok).collect();
 
-    // Transport failure and cancellation are consumer-owned, never RelayError variants.
+    // Transport failure and cancellation are consumer-owned, never Error variants.
     // Stopping input must not fabricate completion or an incomplete-stream error.
     {
         let mut stream = adapter.open_stream(status, &headers).expect("stream");
@@ -219,7 +219,7 @@ fn dropping_partial_stream_preserves_events_without_errors_but_normal_eof_is_inc
         let terminal: Vec<_> = stream.finish().collect();
         assert!(matches!(
             terminal.as_slice(),
-            [Err(RelayError::IncompleteStream(_))]
+            [Err(Error::IncompleteStream(_))]
         ));
     }
 }
@@ -238,7 +238,7 @@ fn messages_adapter_rejects_unrepresentable_system_position_without_reordering()
     let error = AnthropicAdapter::new("fixture-key")
         .build_request(&input)
         .expect_err("must reject instead of producing a reordered body");
-    let RelayError::Conversion(error) = error else {
+    let Error::Conversion(error) = error else {
         panic!("expected conversion failure, got {error:?}")
     };
     assert_eq!(error.kind, ConversionErrorKind::Invalid);
@@ -283,7 +283,7 @@ fn model_ids_do_not_change_encoding_and_unknown_model_rejection_remains_a_provid
             include_bytes!("fixtures/live/anthropic_bearer_model_not_found.json"),
         )
         .expect_err("provider rejects unknown model");
-    let RelayError::Provider(error) = error else {
+    let Error::Provider(error) = error else {
         panic!("expected normalized provider failure, got {error:?}")
     };
     assert_eq!(error.http_status, Some(404));

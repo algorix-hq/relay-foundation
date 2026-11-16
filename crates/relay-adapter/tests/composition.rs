@@ -9,8 +9,8 @@ use relay_bridge::{
     MessagesBridge, ResponsesBridge,
 };
 use relay_protocol::{
-    AssistantContent, ConfigurationError, ConversionErrorKind, DecodeError, Delivery, Message,
-    ProviderError, ProviderErrorCategory, RelayError, StreamEvent,
+    AssistantContent, ConfigurationError, ConversionErrorKind, DecodeError, Delivery, Error,
+    Message, ProviderError, ProviderErrorCategory, StreamEvent,
 };
 use serde_json::{Value, json};
 
@@ -163,7 +163,7 @@ fn provider_error(payload: &Value, http_status: Option<u16>) -> ProviderError {
 struct TestErrors;
 
 impl ErrorEncoder for TestErrors {
-    fn encode_error(&self, error: &RelayError, stage: Stage) -> EncodedError {
+    fn encode_error(&self, error: &Error, stage: Stage) -> EncodedError {
         EncodedError {
             status: if stage == Stage::Request { 400 } else { 502 },
             headers: Headers::default(),
@@ -171,7 +171,7 @@ impl ErrorEncoder for TestErrors {
         }
     }
 
-    fn encode_stream_error(&self, error: &RelayError) -> Vec<Frame> {
+    fn encode_stream_error(&self, error: &Error) -> Vec<Frame> {
         vec![Frame {
             event: Some("relay-error".into()),
             data: serde_json::to_string(error).expect("error JSON"),
@@ -317,7 +317,7 @@ fn custom_adapter_preserves_each_builtin_bridges_requests_responses_and_identity
             .expect_err("provider rejection");
         assert_eq!(
             error,
-            RelayError::Provider(ProviderError {
+            Error::Provider(ProviderError {
                 code: Some("x".into()),
                 http_status: Some(503),
                 ..provider_error(&Value::Null, None)
@@ -388,7 +388,7 @@ fn provider_error_frames_bypass_the_bridge_and_terminate_after_prior_events() {
             .open_stream(200, &Headers::default())
             .expect("stream");
         let payload: Value = serde_json::from_str(&error.data).expect("error JSON");
-        let failure = RelayError::Provider(provider_error(&payload, None));
+        let failure = Error::Provider(provider_error(&payload, None));
         let wire = sse(&[prefix.to_vec(), vec![error.clone()], frames[3..].to_vec()].concat());
         let mut actual = Vec::new();
         for chunk in wire.chunks(19) {
@@ -553,7 +553,7 @@ fn messages_gateway_stream_encodes_one_provider_error_after_earlier_chat_chunks(
     let failure = frame(json!({"type":"error","error":{"type":"x"}}));
     let wire = sse(&[frames[..3].to_vec(), vec![failure], frames[3..].to_vec()].concat());
     let actual = transcoder.push(&wire);
-    let expected_error = RelayError::Provider(provider_error(&json!({"error":{"type":"x"}}), None));
+    let expected_error = Error::Provider(provider_error(&json!({"error":{"type":"x"}}), None));
     assert_eq!(
         transcoder.report().outcome,
         Some(Outcome::Failed(expected_error.clone()))
@@ -570,7 +570,7 @@ fn messages_gateway_stream_encodes_one_provider_error_after_earlier_chat_chunks(
     }
     assert_eq!(actual[3].event.as_deref(), Some("relay-error"));
     assert_eq!(
-        serde_json::from_str::<RelayError>(&actual[3].data).expect("normalized error"),
+        serde_json::from_str::<Error>(&actual[3].data).expect("normalized error"),
         expected_error
     );
     assert!(transcoder.push(&sse(&frames)).is_empty());
@@ -650,7 +650,7 @@ fn messages_composition_requires_explicit_loss_for_foreign_reasoning_and_samplin
         let error = strict
             .build_request(&request)
             .expect_err("strict cross-format conversion");
-        let RelayError::Conversion(error) = error else {
+        let Error::Conversion(error) = error else {
             panic!("expected Conversion")
         };
         assert_eq!(error.kind, ConversionErrorKind::Unrepresentable);
@@ -677,7 +677,7 @@ fn messages_composition_requires_explicit_loss_for_foreign_reasoning_and_samplin
 
 #[test]
 fn messages_only_custom_adapter_rejects_chat_completions_composition() {
-    let error: RelayError = CustomAdapter::with_formats(
+    let error: Error = CustomAdapter::with_formats(
         Arc::new(ChatCompletionsBridge::new()),
         &[ApiFormat::MESSAGES],
         ConversionOptions::default(),
@@ -685,5 +685,5 @@ fn messages_only_custom_adapter_rejects_chat_completions_composition() {
     .err()
     .expect("incompatible composition")
     .into();
-    assert!(matches!(error, RelayError::Configuration(_)));
+    assert!(matches!(error, Error::Configuration(_)));
 }

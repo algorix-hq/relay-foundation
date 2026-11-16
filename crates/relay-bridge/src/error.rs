@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use relay_protocol::{ConversionError, DecodeError, IncompleteStream, RelayError};
+use relay_protocol::{ConversionError, DecodeError, IncompleteStream};
 
 /// There is no provider variant by design: only adapters classify provider failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ impl From<IncompleteStream> for BridgeError {
     }
 }
 
-impl From<BridgeError> for RelayError {
+impl From<BridgeError> for relay_protocol::Error {
     fn from(error: BridgeError) -> Self {
         match error {
             BridgeError::Conversion(error) => Self::Conversion(error),

@@ -89,15 +89,15 @@ Relay has no HTTP types of its own beyond plain data: `ProviderRequest { method:
 
 ```rust
 use relay_adapter::{Headers, Method, ProviderRequest};
-use relay_protocol::RelayError;
+use relay_protocol::Error;
 
 #[derive(Debug)]
 enum GatewayError {
-    Relay(RelayError),
+    Relay(Error),
     Transport(Box<dyn std::error::Error + Send + Sync>),
     Cancelled,
 }
-impl From<RelayError> for GatewayError { fn from(e: RelayError) -> Self { Self::Relay(e) } }
+impl From<Error> for GatewayError { fn from(e: Error) -> Self { Self::Relay(e) } }
 impl From<relay_bridge::BridgeError> for GatewayError { fn from(e: relay_bridge::BridgeError) -> Self { Self::Relay(e.into()) } }
 impl From<relay_protocol::ConfigurationError> for GatewayError { fn from(e: relay_protocol::ConfigurationError) -> Self { Self::Relay(e.into()) } }
 impl From<reqwest::Error> for GatewayError { fn from(e: reqwest::Error) -> Self { Self::Transport(Box::new(e)) } }
@@ -171,7 +171,7 @@ let stream = match adapter.open_stream(status, &headers) {
     Ok(stream) => stream,
     Err(rejected) => {
         let body = response.bytes().await?;
-        return Err(GatewayError::Relay(rejected.classify(&body)));  // always RelayError::Provider
+        return Err(GatewayError::Relay(rejected.classify(&body)));  // always Error::Provider
     }
 };
 let errors: Arc<dyn ErrorEncoder> = Arc::new(ChatCompletionsErrors::new());

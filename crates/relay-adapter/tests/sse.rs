@@ -1,6 +1,6 @@
 use relay_adapter::{Adapter, AdapterExt, Headers, OpenAiCompatibleAdapter, SseDecoder};
 use relay_bridge::Frame;
-use relay_protocol::{RelayError, StreamEvent};
+use relay_protocol::{Error, StreamEvent};
 
 fn decode(chunks: &[&[u8]]) -> Vec<Frame> {
     let mut decoder = SseDecoder::new();
@@ -109,7 +109,7 @@ fn compatible_recorded_stream_completes_with_final_usage_and_eof_flushes_error_d
     let items: Vec<_> = stream.finish().collect();
     assert_eq!(items.len(), 1);
     assert!(
-        matches!(&items[0], Err(RelayError::Provider(error)) if error.category == relay_protocol::ProviderErrorCategory::InsufficientQuota && error.http_status.is_none())
+        matches!(&items[0], Err(Error::Provider(error)) if error.category == relay_protocol::ProviderErrorCategory::InsufficientQuota && error.http_status.is_none())
     );
 }
 
@@ -145,7 +145,7 @@ fn malformed_utf8_preserves_prior_frames_and_becomes_decode_after_earlier_stream
     wire.extend_from_slice(b"data: \xff\n\n");
     let items = stream.push(&wire).collect::<Vec<_>>();
     assert!(matches!(items[0], Ok(StreamEvent::Start { .. })));
-    assert!(matches!(items.last(), Some(Err(RelayError::Decode(_)))));
+    assert!(matches!(items.last(), Some(Err(Error::Decode(_)))));
     assert_eq!(items.iter().filter(|item| item.is_err()).count(), 1);
     let mut frames = Vec::new();
     let mut decoder = adapter.frame_decoder(&Headers::default());

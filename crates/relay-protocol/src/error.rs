@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// cancellation are intentionally absent; consumers compose those themselves.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RelayError {
+pub enum Error {
     /// A declared remote failure normalized by the adapter.
     Provider(ProviderError),
     /// Meaning could not be preserved when converting between representations.
@@ -21,7 +21,7 @@ pub enum RelayError {
     UnsupportedOperation(UnsupportedOperation),
 }
 
-impl fmt::Display for RelayError {
+impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Provider(error) => write!(formatter, "provider error: {error}"),
@@ -36,8 +36,8 @@ impl fmt::Display for RelayError {
     }
 }
 
-impl Error for RelayError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Provider(error) => Some(error),
             Self::Conversion(error) => Some(error),
@@ -49,37 +49,37 @@ impl Error for RelayError {
     }
 }
 
-impl From<ProviderError> for RelayError {
+impl From<ProviderError> for Error {
     fn from(error: ProviderError) -> Self {
         Self::Provider(error)
     }
 }
 
-impl From<ConversionError> for RelayError {
+impl From<ConversionError> for Error {
     fn from(error: ConversionError) -> Self {
         Self::Conversion(error)
     }
 }
 
-impl From<DecodeError> for RelayError {
+impl From<DecodeError> for Error {
     fn from(error: DecodeError) -> Self {
         Self::Decode(error)
     }
 }
 
-impl From<IncompleteStream> for RelayError {
+impl From<IncompleteStream> for Error {
     fn from(error: IncompleteStream) -> Self {
         Self::IncompleteStream(error)
     }
 }
 
-impl From<ConfigurationError> for RelayError {
+impl From<ConfigurationError> for Error {
     fn from(error: ConfigurationError) -> Self {
         Self::Configuration(error)
     }
 }
 
-impl From<UnsupportedOperation> for RelayError {
+impl From<UnsupportedOperation> for Error {
     fn from(error: UnsupportedOperation) -> Self {
         Self::UnsupportedOperation(error)
     }
@@ -98,7 +98,7 @@ impl fmt::Display for DecodeError {
     }
 }
 
-impl Error for DecodeError {}
+impl std::error::Error for DecodeError {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,7 +112,7 @@ impl fmt::Display for IncompleteStream {
     }
 }
 
-impl Error for IncompleteStream {}
+impl std::error::Error for IncompleteStream {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -126,7 +126,7 @@ impl fmt::Display for ConfigurationError {
     }
 }
 
-impl Error for ConfigurationError {}
+impl std::error::Error for ConfigurationError {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,7 +141,7 @@ impl fmt::Display for UnsupportedOperation {
     }
 }
 
-impl Error for UnsupportedOperation {}
+impl std::error::Error for UnsupportedOperation {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -169,7 +169,7 @@ impl fmt::Display for ConversionError {
     }
 }
 
-impl Error for ConversionError {}
+impl std::error::Error for ConversionError {}
 
 /// An omission explicitly allowed by the consumer, not an implicit best effort.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,7 +185,7 @@ impl fmt::Display for ConversionLoss {
     }
 }
 
-impl Error for ConversionLoss {}
+impl std::error::Error for ConversionLoss {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -208,7 +208,7 @@ impl fmt::Display for ProviderError {
     }
 }
 
-impl Error for ProviderError {}
+impl std::error::Error for ProviderError {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

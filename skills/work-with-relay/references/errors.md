@@ -4,14 +4,14 @@
 
 | Variant | Produced by | Meaning |
 |---|---|---|
-| `RelayError::Provider(ProviderError)` | adapter only | The provider declared a failure, in an HTTP response (any status, including 200 with an error body) or a mid-stream frame |
-| `RelayError::Conversion(ConversionError)` | bridge | Input is malformed (`Invalid`), valid but not expressible in the target format (`Unrepresentable`), or not implemented (`Unsupported`) |
-| `RelayError::Decode(DecodeError)` | bridge or adapter framing | A success response or stream frame could not be interpreted |
-| `RelayError::IncompleteStream` | bridge stream decoder | Provider body ended normally without a stop signal |
-| `RelayError::Configuration` | adapter or `Conversion` | Setup is invalid, for example an empty URL or a bridge the adapter does not support |
-| `RelayError::UnsupportedOperation` | adapter | Optional operation missing, for example `list_models` without discovery |
+| `relay_protocol::Error::Provider(ProviderError)` | adapter only | The provider declared a failure, in an HTTP response (any status, including 200 with an error body) or a mid-stream frame |
+| `relay_protocol::Error::Conversion(ConversionError)` | bridge | Input is malformed (`Invalid`), valid but not expressible in the target format (`Unrepresentable`), or not implemented (`Unsupported`) |
+| `relay_protocol::Error::Decode(DecodeError)` | bridge or adapter framing | A success response or stream frame could not be interpreted |
+| `relay_protocol::Error::IncompleteStream` | bridge stream decoder | Provider body ended normally without a stop signal |
+| `relay_protocol::Error::Configuration` | adapter or `Conversion` | Setup is invalid, for example an empty URL or a bridge the adapter does not support |
+| `relay_protocol::Error::UnsupportedOperation` | adapter | Optional operation missing, for example `list_models` without discovery |
 
-`BridgeError` has only `Conversion`, `Decode`, and `IncompleteStream`, and converts into `RelayError` with `.into()`.
+`BridgeError` has only `Conversion`, `Decode`, and `IncompleteStream`, and converts into `relay_protocol::Error` with `.into()`.
 
 ```rust
 pub struct ProviderError {
@@ -33,7 +33,7 @@ Consumers decide retry policy from `category` and `retry_after`. Do not re-class
 
 ## Answering the client
 
-Use the error encoder for the **client** format. It maps an already-classified `RelayError` to status, headers, and body; it never classifies.
+Use the error encoder for the **client** format. It maps an already-classified `relay_protocol::Error` to status, headers, and body; it never classifies.
 
 ```rust
 use relay_adapter::{EncodedError, ErrorEncoder, MessagesErrors, Stage};
@@ -62,7 +62,7 @@ Built-in mappings, from the library's own table:
 | Transport cut or cancellation, transcoder dropped | `outcome: None` | nothing automatic; consumer handles `Transport`/`Cancelled` |
 | Model discovery not provided | `UnsupportedOperation(list_models)` | 501 |
 
-Transport errors and cancellation are not `RelayError`. Map them to your own client response (often 502 or a closed connection).
+Transport errors and cancellation are not `relay_protocol::Error`. Map them to your own client response (often 502 or a closed connection).
 
 Built-in encoders return the upstream request ID as `x-relay-upstream-request-id`, not as the client format's own request-ID header. They copy `retry_after` to a `retry-after` header and always set `content-type: application/json`.
 

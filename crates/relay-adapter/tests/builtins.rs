@@ -6,7 +6,7 @@ use relay_adapter::{
 };
 use relay_bridge::{ApiFormat, ChatCompletionsBridge, LossScope, MessagesBridge, ResponsesBridge};
 use relay_protocol::{
-    ProviderError, ProviderErrorCategory as Category, RelayError, Request, RetryAfter, StreamEvent,
+    Error, ProviderError, ProviderErrorCategory as Category, Request, RetryAfter, StreamEvent,
 };
 use serde_json::{Value, json};
 
@@ -405,7 +405,7 @@ fn requests_use_exact_endpoints_authentication_and_adapter_selected_paths() {
     assert_eq!(request.headers.get("anthropic-version"), Some("custom"));
     assert!(matches!(
         OpenAiCompatibleAdapter::new("").build_request(&input()),
-        Err(RelayError::Configuration(_))
+        Err(Error::Configuration(_))
     ));
 }
 
@@ -422,7 +422,7 @@ fn compatible_server_declaration_rejects_any_choice_before_conversion() {
         let mut value = serde_json::to_value(input()).expect("input");
         value["tools"] = json!({"definitions":[],"choice":choice});
         let request: Request = serde_json::from_value(value).expect("choice");
-        let RelayError::Configuration(error) = adapter
+        let Error::Configuration(error) = adapter
             .build_request(&request)
             .expect_err("unsupported server feature")
         else {
@@ -524,12 +524,12 @@ fn model_discovery_preserves_ids_and_only_anthropic_paginates() {
         );
         assert!(matches!(
             adapter.parse_models(200, &Headers::default(), br#"{"data":[{"id":7}]}"#),
-            Err(RelayError::Decode(_))
+            Err(Error::Decode(_))
         ));
     }
     assert!(matches!(
         OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions").list_models(None),
-        Err(RelayError::UnsupportedOperation(_))
+        Err(Error::UnsupportedOperation(_))
     ));
 }
 
@@ -647,7 +647,7 @@ fn provider_stream_failures_follow_prior_events_and_never_reach_bridges() {
         );
         assert_eq!(
             items.last(),
-            Some(&Err(RelayError::Provider(ProviderError {
+            Some(&Err(Error::Provider(ProviderError {
                 category,
                 code: code.map(str::to_owned),
                 http_status: None,
@@ -668,7 +668,7 @@ fn provider_stream_failures_follow_prior_events_and_never_reach_bridges() {
 #[test]
 fn http_success_error_envelopes_are_provider_errors_but_malformed_successes_are_decode_errors() {
     for adapter in adapters() {
-        let RelayError::Provider(error) = adapter
+        let Error::Provider(error) = adapter
             .parse_response(
                 200,
                 &Headers::default(),
@@ -682,7 +682,7 @@ fn http_success_error_envelopes_are_provider_errors_but_malformed_successes_are_
         assert_eq!(error.http_status, Some(200));
         assert!(matches!(
             adapter.parse_response(200, &Headers::default(), b"invalid"),
-            Err(RelayError::Decode(_))
+            Err(Error::Decode(_))
         ));
     }
 }
@@ -699,7 +699,7 @@ fn fixed_adapters_expose_bridge_settings_without_bridge_replacement() {
     assert_eq!(body["max_tokens"], 64);
     assert!(matches!(
         AnthropicAdapter::new("key").build_request(&request),
-        Err(RelayError::Conversion(_))
+        Err(Error::Conversion(_))
     ));
 
     let (built, _) = OpenAiAdapter::new("key")
