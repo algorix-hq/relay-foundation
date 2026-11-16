@@ -1,6 +1,6 @@
 # Custom adapters
 
-Built-ins cover OpenAI, Anthropic, and OpenAI-compatible servers. Any other provider (for example Kiro or ChatGPT) is a consumer-owned adapter. Write it in the consumer crate, not in relay-foundation.
+The adapters under `relay_adapter::providers` cover the providers relay-foundation ships. For any other provider, write an adapter in the consumer crate as described here.
 
 ## Decide the bridge first
 
