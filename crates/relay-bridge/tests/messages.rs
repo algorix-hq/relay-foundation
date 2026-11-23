@@ -185,10 +185,68 @@ fn ingress_preserves_system_positions_tools_reasoning_and_delivery() {
 }
 
 #[test]
+fn request_service_tier_is_distinct_from_usage_service_tier() {
+    use relay_protocol::ServiceTier;
+
+    let bridge = MessagesBridge::new();
+    let mut body = fixture("request-minimal.json");
+    for (wire, tier) in [
+        ("auto", ServiceTier::Auto),
+        ("standard_only", ServiceTier::Standard),
+    ] {
+        body["service_tier"] = json!(wire);
+        let request = bridge
+            .decode_request(&serde_json::to_vec(&body).unwrap())
+            .unwrap();
+        assert_eq!(
+            request.parameters.as_ref().unwrap().service_tier,
+            Some(tier)
+        );
+        assert_eq!(
+            bridge
+                .encode_request(&request, &ConversionOptions::default())
+                .unwrap()
+                .body,
+            body
+        );
+    }
+    for (wire, kind) in [
+        (json!("standard"), ConversionErrorKind::Unrepresentable),
+        (Value::Null, ConversionErrorKind::Invalid),
+    ] {
+        body["service_tier"] = wire;
+        assert_conversion(
+            bridge
+                .decode_request(&serde_json::to_vec(&body).unwrap())
+                .unwrap_err(),
+            kind,
+            "/service_tier",
+        );
+    }
+    for tier in [
+        "flex",
+        "priority",
+        "scale",
+        "reserved",
+        "batch",
+        "standard_only",
+    ] {
+        let request =
+            protocol_input(json!({"parameters":{"max_output_tokens":32,"service_tier":tier}}));
+        assert_conversion(
+            bridge
+                .encode_request(&request, &ConversionOptions::default())
+                .unwrap_err(),
+            ConversionErrorKind::Unrepresentable,
+            "/parameters/service_tier",
+        );
+    }
+}
+
+#[test]
 fn ingress_rejects_top_level_fields_without_protocol_counterparts() {
     for key in [
         "metadata",
-        "service_tier",
         "container",
         "speed",
         "inference_geo",

@@ -232,11 +232,69 @@ fn legacy_definitions_and_choice_map_without_inventing_call_ids() {
 }
 
 #[test]
+fn openai_request_formats_map_only_their_wire_service_tiers() {
+    let chat = ChatCompletionsBridge::new();
+    let responses = relay_bridge::ResponsesBridge::new();
+    for (bridge, mut body) in [
+        (&chat as &dyn Bridge, json!({"model":"m","messages":[]})),
+        (&responses, json!({"model":"m","input":[]})),
+    ] {
+        for (wire, tier) in [
+            ("auto", ServiceTier::Auto),
+            ("default", ServiceTier::Standard),
+            ("flex", ServiceTier::Flex),
+            ("priority", ServiceTier::Priority),
+            ("scale", ServiceTier::Scale),
+        ] {
+            body["service_tier"] = json!(wire);
+            let request = bridge
+                .decode_request(&serde_json::to_vec(&body).unwrap())
+                .unwrap();
+            assert_eq!(
+                request.parameters.as_ref().unwrap().service_tier,
+                Some(tier)
+            );
+            let encoded = bridge
+                .encode_request(&request, &ConversionOptions::default())
+                .unwrap();
+            assert_eq!(encoded.body["service_tier"], wire);
+        }
+        body["service_tier"] = Value::Null;
+        assert!(
+            bridge
+                .decode_request(&serde_json::to_vec(&body).unwrap())
+                .unwrap()
+                .parameters
+                .is_none()
+        );
+        body["service_tier"] = json!("standard");
+        assert_conversion(
+            bridge
+                .decode_request(&serde_json::to_vec(&body).unwrap())
+                .unwrap_err(),
+            ConversionErrorKind::Unrepresentable,
+            "/service_tier",
+        );
+        for tier in ["reserved", "batch", "default"] {
+            let request = protocol_input(
+                json!({"version":"1","model":"m","messages":[],"parameters":{"service_tier":tier}}),
+            );
+            assert_conversion(
+                bridge
+                    .encode_request(&request, &ConversionOptions::default())
+                    .unwrap_err(),
+                ConversionErrorKind::Unrepresentable,
+                "/parameters/service_tier",
+            );
+        }
+    }
+}
+
+#[test]
 fn ingress_rejects_seed_and_other_unrepresentable_top_level_fields() {
     let bridge = ChatCompletionsBridge::new();
     for (key, value) in [
         ("seed", json!(42)),
-        ("service_tier", json!("default")),
         ("metadata", json!({"consumer":"fixture"})),
         ("user", json!("u")),
         ("logprobs", json!(true)),

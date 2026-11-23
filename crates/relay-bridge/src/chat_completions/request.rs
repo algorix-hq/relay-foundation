@@ -2,6 +2,7 @@ use relay_protocol::*;
 use serde_json::{Map, Value, json};
 
 use super::*;
+use crate::service_tier::OPENAI;
 
 pub(super) fn decode(body: &[u8], reasoning_field: ReasoningField) -> Result<Request, BridgeError> {
     let value = serde_json::from_slice(body).map_err(|e| invalid("", e.to_string()))?;
@@ -40,20 +41,28 @@ pub(super) fn decode(body: &[u8], reasoning_field: ReasoningField) -> Result<Req
     }
     let temperature = optional(&mut fields, "temperature", "")?;
     let top_p = optional(&mut fields, "top_p", "")?;
+    let service_tier = fields
+        .remove("service_tier")
+        .filter(|v| !v.is_null())
+        .map(|v| OPENAI.decode(v))
+        .transpose()?;
     let stop = match fields.remove("stop").filter(|v| !v.is_null()) {
         Some(Value::String(s)) => vec![s],
         Some(value) => parse(value, "/stop")?,
         None => Vec::new(),
     };
-    let parameters =
-        (old_max.or(max).is_some() || temperature.is_some() || top_p.is_some() || !stop.is_empty())
-            .then_some(Parameters {
-                max_output_tokens: old_max.or(max),
-                temperature,
-                top_p,
-                service_tier: None,
-                stop,
-            });
+    let parameters = (old_max.or(max).is_some()
+        || temperature.is_some()
+        || top_p.is_some()
+        || service_tier.is_some()
+        || !stop.is_empty())
+    .then_some(Parameters {
+        max_output_tokens: old_max.or(max),
+        temperature,
+        top_p,
+        service_tier,
+        stop,
+    });
     let definitions = fields.remove("tools").filter(|v| !v.is_null());
     let legacy = fields.remove("functions").filter(|v| !v.is_null());
     if definitions.is_some() && legacy.is_some() {
@@ -542,11 +551,8 @@ pub(super) fn encode(
         }
     }
     if let Some(parameters) = &request.parameters {
-        if parameters.service_tier.is_some() {
-            return Err(unrepresentable(
-                "/parameters/service_tier",
-                "unsupported service tier",
-            ));
+        if let Some(tier) = &parameters.service_tier {
+            body.insert("service_tier".into(), json!(OPENAI.encode(tier)?));
         }
         if let Some(max) = parameters.max_output_tokens {
             body.insert(

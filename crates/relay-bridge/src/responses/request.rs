@@ -6,6 +6,7 @@ use relay_protocol::{
 use serde_json::{Map, Value, json};
 
 use super::wire::*;
+use crate::service_tier::OPENAI;
 use crate::{BridgeError, ConversionOptions, Encoded, LossScope};
 
 pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
@@ -55,20 +56,28 @@ pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
     let max_output_tokens = optional!(&mut fields, "max_output_tokens", "")?;
     let temperature = optional!(&mut fields, "temperature", "")?;
     let top_p = optional!(&mut fields, "top_p", "")?;
+    let service_tier = fields
+        .remove("service_tier")
+        .filter(|v| !v.is_null())
+        .map(|v| OPENAI.decode(v))
+        .transpose()?;
     if fields.contains_key("stop") {
         return Err(unrepresentable(
             "/stop",
             "Responses has no stop sequence field",
         ));
     }
-    let parameters = (max_output_tokens.is_some() || temperature.is_some() || top_p.is_some())
-        .then_some(Parameters {
-            max_output_tokens,
-            temperature,
-            top_p,
-            service_tier: None,
-            stop: Vec::new(),
-        });
+    let parameters = (max_output_tokens.is_some()
+        || temperature.is_some()
+        || top_p.is_some()
+        || service_tier.is_some())
+    .then_some(Parameters {
+        max_output_tokens,
+        temperature,
+        top_p,
+        service_tier,
+        stop: Vec::new(),
+    });
     let reasoning = fields
         .remove("reasoning")
         .filter(|value| !value.is_null())
@@ -579,6 +588,13 @@ pub(super) fn encode(
         ),
     ]);
     body.extend(encode_settings(request, options, &mut losses)?);
+    if let Some(tier) = request
+        .parameters
+        .as_ref()
+        .and_then(|p| p.service_tier.as_ref())
+    {
+        body.insert("service_tier".into(), json!(OPENAI.encode(tier)?));
+    }
     put!(&mut body, "store", store);
     Ok(Encoded {
         body: body.into(),
@@ -593,12 +609,6 @@ pub(super) fn encode_settings(
 ) -> Result<Map<String, Value>, BridgeError> {
     let mut body = Map::new();
     if let Some(parameters) = &request.parameters {
-        if parameters.service_tier.is_some() {
-            return Err(unrepresentable(
-                "/parameters/service_tier",
-                "unsupported service tier",
-            ));
-        }
         if !parameters.stop.is_empty() {
             return Err(unrepresentable(
                 "/parameters/stop",

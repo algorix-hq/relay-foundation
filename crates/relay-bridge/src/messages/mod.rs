@@ -8,6 +8,7 @@
 //! <https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations>.
 //! Server tool results have no request representation, so this bridge can encode
 //! only the user-turn case. Model-specific feature support is never checked.
+//! Request `service_tier` accepts `auto` and `standard_only` (the standard tier).
 //!
 //! Response decoding ignores new fields in known blocks, including SDK text
 //! `citations` and tool-use `caller` and `toolset_name`. Unknown block types are

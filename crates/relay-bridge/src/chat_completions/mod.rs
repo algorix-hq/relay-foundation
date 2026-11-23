@@ -2,6 +2,7 @@
 //!
 //! `ChatCompletionsBridge::new()` emits `max_completion_tokens`; compatible servers
 //! can use `ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)`.
+//! Request `service_tier: "default"` maps to the standard tier.
 //! Response decoding ignores annotations, audio, choice logprobs, and usage details
 //! for total, audio, image, text, and accepted/rejected prediction tokens. Refusals are retained
 //! as unknown content, not converted into text. Stream-only moderation, obfuscation,

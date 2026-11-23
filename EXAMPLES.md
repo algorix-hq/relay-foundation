@@ -7,7 +7,7 @@ Actual output of passing the same `Request` through the three bridges and the bu
 ```rust
 use relay_protocol::{
     AssistantContent, Delivery, ImageDetail, ImagePart, MediaSource, Message, Parameters,
-    Reasoning, ReasoningEffort, Request, TextPart, Tool, ToolChoice, ToolConfig,
+    Reasoning, ReasoningEffort, Request, ServiceTier, TextPart, Tool, ToolChoice, ToolConfig,
     ToolResultContent, UserContent, Version,
 };
 use serde_json::json;
@@ -48,7 +48,7 @@ let request = Request {
     }),
     parameters: Some(Parameters {
         max_output_tokens: Some(4096), temperature: Some(0.7), top_p: None, stop: vec![],
-        service_tier: None,
+        service_tier: Some(ServiceTier::Standard),
     }),
     response_format: None,
     reasoning: Some(Reasoning {
@@ -73,7 +73,7 @@ let request = Request {
     "choice": "auto",
     "parallel": false
   },
-  "parameters": {"max_output_tokens": 4096, "temperature": 0.7},
+  "parameters": {"max_output_tokens": 4096, "temperature": 0.7, "service_tier": "standard"},
   "reasoning": {"effort": "high"},
   "delivery": {"stream": true, "stream_usage": true}
 }
@@ -101,6 +101,7 @@ let messages = MessagesBridge::new().encode_request(&request, &lossy)?;
 | `messages` | `messages` | `input` | `messages` |
 | `parameters.max_output_tokens` | `max_completion_tokens` | `max_output_tokens` | `max_tokens` |
 | `parameters.temperature` | `temperature` | `temperature` | omitted, reported in `losses` |
+| `parameters.service_tier: Standard` | `service_tier: "default"` | `service_tier: "default"` | `service_tier: "standard_only"` |
 | `reasoning.effort` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` |
 | `delivery` | `stream`, `stream_options.include_usage` | `stream` | `stream` |
 | image `detail` | `image_url.detail` | `detail` | omitted, reported in `losses` |
@@ -125,6 +126,7 @@ Chat Completions:
   "tool_choice": "auto",
   "parallel_tool_calls": false,
   "max_completion_tokens": 4096,
+  "service_tier": "default",
   "temperature": 0.7,
   "reasoning_effort": "high",
   "stream": true,
@@ -148,6 +150,7 @@ Responses:
   "tool_choice": "auto",
   "parallel_tool_calls": false,
   "max_output_tokens": 4096,
+  "service_tier": "default",
   "temperature": 0.7,
   "reasoning": {"effort": "high"},
   "stream": true
@@ -169,6 +172,7 @@ Messages:
   ],
   "tool_choice": {"type": "auto", "disable_parallel_tool_use": true},
   "max_tokens": 4096,
+  "service_tier": "standard_only",
   "output_config": {"effort": "high"},
   "stream": true
 }

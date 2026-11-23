@@ -3,6 +3,7 @@
 //! Request encoding emits system instructions as input items, never `instructions`.
 //! `store` is omitted unless configured; `include` is never added. Request ingress
 //! rejects every field without a protocol representation, including status and phase.
+//! Request `service_tier: "default"` maps to the standard tier.
 //! Reasoning replay requires `provider_id`; a Relay ID is never used for replay.
 //! Missing replay identity requires explicit Reasoning loss permission.
 //!

@@ -5,6 +5,7 @@ pub mod chat_completions;
 mod error;
 pub mod messages;
 pub mod responses;
+mod service_tier;
 
 pub use chat_completions::{ChatCompletionsBridge, ReasoningField};
 pub use error::BridgeError;

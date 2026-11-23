@@ -5,6 +5,7 @@ use relay_protocol::{
 use serde_json::{Value, json};
 
 use super::{content::*, *};
+use crate::service_tier::MESSAGES;
 
 pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
     let value: Value = serde_json::from_slice(body).map_err(|e| invalid("", e.to_string()))?;
@@ -81,6 +82,10 @@ pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
             v.as_f64()
                 .ok_or_else(|| invalid("/top_p", "expected a number"))
         })
+        .transpose()?;
+    let service_tier = remaining
+        .remove("service_tier")
+        .map(|v| MESSAGES.decode(v))
         .transpose()?;
     let stop = remaining
         .remove("stop_sequences")
@@ -250,7 +255,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
             max_output_tokens: Some(max_output_tokens),
             temperature,
             top_p,
-            service_tier: None,
+            service_tier,
             stop,
         }),
         response_format,
@@ -354,12 +359,6 @@ pub(super) fn encode(
         })?;
     let mut losses = Vec::new();
     if let Some(parameters) = parameters {
-        if parameters.service_tier.is_some() {
-            return Err(unrepresentable(
-                "/parameters/service_tier",
-                "unsupported service tier",
-            ));
-        }
         for (name, present) in [
             ("temperature", parameters.temperature.is_some()),
             ("top_p", parameters.top_p.is_some()),
@@ -456,10 +455,13 @@ pub(super) fn encode(
     if request.delivery.is_some_and(|delivery| delivery.stream) {
         body["stream"] = json!(true);
     }
-    if let Some(parameters) = parameters
-        && !parameters.stop.is_empty()
-    {
-        body["stop_sequences"] = json!(parameters.stop);
+    if let Some(parameters) = parameters {
+        if let Some(tier) = &parameters.service_tier {
+            body["service_tier"] = json!(MESSAGES.encode(tier)?);
+        }
+        if !parameters.stop.is_empty() {
+            body["stop_sequences"] = json!(parameters.stop);
+        }
     }
     let mut output_config = json!({});
     if let Some(reasoning) = &request.reasoning {

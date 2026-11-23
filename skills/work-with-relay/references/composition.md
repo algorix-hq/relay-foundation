@@ -3,6 +3,7 @@
 ## Contents
 - Choosing the client bridge and adapter
 - Built-in constructors
+- Request service tiers
 - Chat Completions reasoning text
 - Consumer error type and HTTP glue
 - Non-streaming request
@@ -62,6 +63,10 @@ All built-ins also have `allow_loss`, `with_id_generator`, and `with_clock`. The
 Bridge constructors with options: `ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)` (`relay_bridge::chat_completions::MaxTokensField`), `MessagesBridge::with_default_max_tokens(n)`, `ResponsesBridge::with_config(ResponsesBridgeConfig { store: Some(false) })` (`relay_bridge::responses::ResponsesBridgeConfig`).
 
 Bridge methods need the `relay_bridge::Bridge` trait in scope. Consumer adapter methods (`build_request`, `parse_response`, `open_stream`, `list_models`, `parse_models`) need `relay_adapter::AdapterExt` in scope.
+
+## Request service tiers
+
+Chat Completions and Responses map `ServiceTier::Standard` to `"default"` and carry `auto`, `flex`, `scale`, and `priority` unchanged. Messages maps `Standard` to `"standard_only"` and also accepts `auto`. All three reverse those mappings on ingress and reject unsupported tiers rather than forwarding custom strings. Omit `parameters.service_tier` to leave the choice to the endpoint.
 
 ## Chat Completions reasoning text
 
