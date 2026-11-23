@@ -250,6 +250,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
             max_output_tokens: Some(max_output_tokens),
             temperature,
             top_p,
+            service_tier: None,
             stop,
         }),
         response_format,
@@ -353,6 +354,12 @@ pub(super) fn encode(
         })?;
     let mut losses = Vec::new();
     if let Some(parameters) = parameters {
+        if parameters.service_tier.is_some() {
+            return Err(unrepresentable(
+                "/parameters/service_tier",
+                "unsupported service tier",
+            ));
+        }
         for (name, present) in [
             ("temperature", parameters.temperature.is_some()),
             ("top_p", parameters.top_p.is_some()),

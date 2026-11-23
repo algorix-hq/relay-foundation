@@ -66,6 +66,7 @@ pub(super) fn decode(body: &[u8]) -> Result<Request, BridgeError> {
             max_output_tokens,
             temperature,
             top_p,
+            service_tier: None,
             stop: Vec::new(),
         });
     let reasoning = fields
@@ -592,6 +593,12 @@ pub(super) fn encode_settings(
 ) -> Result<Map<String, Value>, BridgeError> {
     let mut body = Map::new();
     if let Some(parameters) = &request.parameters {
+        if parameters.service_tier.is_some() {
+            return Err(unrepresentable(
+                "/parameters/service_tier",
+                "unsupported service tier",
+            ));
+        }
         if !parameters.stop.is_empty() {
             return Err(unrepresentable(
                 "/parameters/stop",

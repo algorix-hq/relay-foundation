@@ -28,7 +28,11 @@ pub struct Parameters {
     pub max_output_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
+    pub service_tier: Option<ServiceTier>,
     pub stop: Vec<String>,
+}
+pub enum ServiceTier {
+    Auto, Standard, Flex, Priority, Scale, Reserved, Batch, Custom(String),
 }
 pub enum ResponseFormat {
     Text, JsonObject,
@@ -56,7 +60,7 @@ let request = Request {
         content: vec![UserContent::Text(TextPart { text: "hello".into(), cache_control: None })],
     }],
     tools: None,
-    parameters: Some(Parameters { max_output_tokens: Some(1024), temperature: None, top_p: None, stop: vec![] }),
+    parameters: Some(Parameters { max_output_tokens: Some(1024), temperature: None, top_p: None, service_tier: None, stop: vec![] }),
     response_format: None,
     reasoning: None,
     delivery: None,

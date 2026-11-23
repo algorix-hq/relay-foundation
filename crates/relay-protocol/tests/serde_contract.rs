@@ -2,7 +2,8 @@ use relay_protocol::{
     AssistantContent, CacheControl, ConfigurationError, ConversionError, ConversionErrorKind,
     DecodeError, Error, IncompleteStream, Message, MetadataScope, ProviderError,
     ProviderErrorCategory, ReasoningEffort, Request, Response, ResponseFormat, RetryAfter,
-    StopReason, StreamEvent, StreamItem, ToolChoice, UnsupportedOperation, UserContent,
+    ServiceTier, StopReason, StreamEvent, StreamItem, ToolChoice, UnsupportedOperation,
+    UserContent,
 };
 use serde_json::{Value, json};
 
@@ -190,6 +191,26 @@ fn unknown_stop_reason_retains_the_provider_string() {
         serde_json::to_string(&reason).unwrap(),
         "\"provider_custom_stop\""
     );
+}
+
+#[test]
+fn service_tiers_preserve_named_and_custom_strings() {
+    for (value, tier) in [
+        ("auto", ServiceTier::Auto),
+        ("standard", ServiceTier::Standard),
+        ("flex", ServiceTier::Flex),
+        ("priority", ServiceTier::Priority),
+        ("scale", ServiceTier::Scale),
+        ("reserved", ServiceTier::Reserved),
+        ("batch", ServiceTier::Batch),
+        ("custom-tier", ServiceTier::Custom("custom-tier".into())),
+    ] {
+        let wire = json!({"service_tier": value});
+        let parameters: relay_protocol::Parameters = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(parameters.service_tier, Some(tier));
+        assert_eq!(serde_json::to_value(parameters).unwrap(), wire);
+    }
+    assert!(serde_json::from_value::<ServiceTier>(json!("")).is_err());
 }
 
 #[test]

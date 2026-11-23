@@ -46,8 +46,56 @@ pub struct Parameters {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum ServiceTier {
+    Auto,
+    Standard,
+    Flex,
+    Priority,
+    Scale,
+    Reserved,
+    Batch,
+    Custom(String),
+}
+
+impl TryFrom<String> for ServiceTier {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "" => Err("a service tier must be nonempty"),
+            "auto" => Ok(Self::Auto),
+            "standard" => Ok(Self::Standard),
+            "flex" => Ok(Self::Flex),
+            "priority" => Ok(Self::Priority),
+            "scale" => Ok(Self::Scale),
+            "reserved" => Ok(Self::Reserved),
+            "batch" => Ok(Self::Batch),
+            _ => Ok(Self::Custom(value)),
+        }
+    }
+}
+
+impl From<ServiceTier> for String {
+    fn from(value: ServiceTier) -> Self {
+        match value {
+            ServiceTier::Auto => "auto".into(),
+            ServiceTier::Standard => "standard".into(),
+            ServiceTier::Flex => "flex".into(),
+            ServiceTier::Priority => "priority".into(),
+            ServiceTier::Scale => "scale".into(),
+            ServiceTier::Reserved => "reserved".into(),
+            ServiceTier::Batch => "batch".into(),
+            ServiceTier::Custom(value) => value,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

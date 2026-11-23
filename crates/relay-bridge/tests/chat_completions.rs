@@ -323,6 +323,7 @@ fn unrepresentable_request_features_have_precise_paths_even_with_loss_permission
             max_output_tokens: None,
             temperature,
             top_p,
+            service_tier: None,
             stop: Vec::new(),
         });
         assert_conversion(

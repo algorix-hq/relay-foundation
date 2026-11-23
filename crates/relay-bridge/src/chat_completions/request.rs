@@ -51,6 +51,7 @@ pub(super) fn decode(body: &[u8], reasoning_field: ReasoningField) -> Result<Req
                 max_output_tokens: old_max.or(max),
                 temperature,
                 top_p,
+                service_tier: None,
                 stop,
             });
     let definitions = fields.remove("tools").filter(|v| !v.is_null());
@@ -541,6 +542,12 @@ pub(super) fn encode(
         }
     }
     if let Some(parameters) = &request.parameters {
+        if parameters.service_tier.is_some() {
+            return Err(unrepresentable(
+                "/parameters/service_tier",
+                "unsupported service tier",
+            ));
+        }
         if let Some(max) = parameters.max_output_tokens {
             body.insert(
                 match max_field {

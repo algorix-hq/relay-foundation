@@ -48,6 +48,7 @@ let request = Request {
     }),
     parameters: Some(Parameters {
         max_output_tokens: Some(4096), temperature: Some(0.7), top_p: None, stop: vec![],
+        service_tier: None,
     }),
     response_format: None,
     reasoning: Some(Reasoning {
@@ -233,6 +234,7 @@ let mut request = Request {
     parameters: Some(Parameters {
         max_output_tokens: Some(4096), temperature: Some(0.7),
         top_p: Some(0.9), stop: vec![],
+        service_tier: None,
     }),
     response_format: Some(ResponseFormat::JsonObject),
     reasoning: Some(Reasoning {

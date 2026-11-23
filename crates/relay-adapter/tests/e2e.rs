@@ -30,6 +30,7 @@ fn request(model: &str, stream: bool) -> Request {
             max_output_tokens: Some(16),
             temperature: None,
             top_p: None,
+            service_tier: None,
             stop: vec![],
         }),
         response_format: None,
