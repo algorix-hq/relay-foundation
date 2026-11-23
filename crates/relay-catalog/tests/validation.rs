@@ -143,6 +143,54 @@ fn lab_and_provider_namespaces_and_both_provider_model_key_parts_are_independent
 }
 
 #[test]
+fn service_tier_lists_and_defaults_validate_independently_of_reasoning() {
+    let labs = [serde_json::from_value(json!({"id":"lab","name":"Lab"})).unwrap()];
+    let record = SpecRecord::Model { id: slug("model") };
+    for (spec, issues) in [
+        (
+            json!({"service_tiers":["standard","custom-tier"],"default_service_tier":"custom-tier"}),
+            vec![],
+        ),
+        (json!({"service_tiers":["standard"]}), vec![]),
+        (
+            json!({"service_tiers":[]}),
+            vec![Issue::EmptyServiceTiers {
+                record: record.clone(),
+            }],
+        ),
+        (
+            json!({"service_tiers":["","standard","standard"],"default_service_tier":"missing"}),
+            vec![
+                Issue::EmptyServiceTier {
+                    record: record.clone(),
+                },
+                Issue::DuplicateServiceTier {
+                    record: record.clone(),
+                    tier: "standard".into(),
+                },
+                Issue::UnknownDefaultServiceTier {
+                    record: record.clone(),
+                    tier: "missing".into(),
+                },
+            ],
+        ),
+        (
+            json!({"default_service_tier":"standard"}),
+            vec![Issue::UnknownDefaultServiceTier {
+                record: record.clone(),
+                tier: "standard".into(),
+            }],
+        ),
+    ] {
+        let model: Model =
+            serde_json::from_value(json!({"id":"model","name":"Model","lab":"lab","spec":spec}))
+                .unwrap();
+        assert_eq!(serde_json::to_value(&model.spec).unwrap(), spec);
+        assert_eq!(validate(&labs, &[], &[model], &[], &[]), issues);
+    }
+}
+
+#[test]
 fn reasoning_spec_issues_name_the_record_after_its_reference_issues() {
     let labs: Vec<Lab> =
         serde_json::from_value(json!([{"id": "lab", "name": "Lab"}])).expect("valid labs");

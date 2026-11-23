@@ -1476,6 +1476,14 @@ println!("{} {} per 1M tokens", display_price(&price), price.currency);
 
 `Price` is `amount / 10^scale` in `currency` per 1M tokens (the example displays `3.75 USD`). The `f64` conversion is for display only; exact cost math is consumer code.
 
+## Service tiers in a model spec
+
+```json
+{"service_tiers": ["standard", "flex"], "default_service_tier": "standard"}
+```
+
+Use protocol names such as `standard` in catalog data; the bridge translates those names for the request. `validate` requires a supplied list to contain at least one tier, with no empty or repeated strings. A default is optional and must belong to the list. Omitting both fields leaves tier support unknown.
+
 ## Reasoning spec
 
 `spec.reasoning` is `false` when the model is verified not to reason, and an object when it does; a missing field means "not verified". `true` is rejected; use `{}` for "supported, no details". Effort levels are open strings, while `display` accepts only `full`, `summarized`, and `omitted`.

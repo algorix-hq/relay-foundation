@@ -13,6 +13,10 @@ pub struct Spec {
     pub reasoning: Option<Reasoning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_modalities: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tiers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_service_tier: Option<String>,
 }
 
 /// Serialized as `false` when unsupported and as an object when supported; `true` is rejected.

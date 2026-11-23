@@ -34,6 +34,20 @@ pub enum Issue {
     EmptyEffortLevels {
         record: SpecRecord,
     },
+    EmptyServiceTiers {
+        record: SpecRecord,
+    },
+    EmptyServiceTier {
+        record: SpecRecord,
+    },
+    DuplicateServiceTier {
+        record: SpecRecord,
+        tier: String,
+    },
+    UnknownDefaultServiceTier {
+        record: SpecRecord,
+        tier: String,
+    },
     DuplicateEffortLevel {
         record: SpecRecord,
         level: String,
@@ -135,6 +149,19 @@ impl fmt::Display for Issue {
             Self::EmptyEffortLevels { record } => {
                 write!(formatter, "{record} lists no reasoning effort levels")
             }
+            Self::EmptyServiceTiers { record } => {
+                write!(formatter, "{record} lists no service tiers")
+            }
+            Self::EmptyServiceTier { record } => {
+                write!(formatter, "{record} lists an empty service tier")
+            }
+            Self::DuplicateServiceTier { record, tier } => {
+                write!(formatter, "{record} repeats service tier {tier}")
+            }
+            Self::UnknownDefaultServiceTier { record, tier } => write!(
+                formatter,
+                "{record} has unlisted default service tier {tier}"
+            ),
             Self::DuplicateEffortLevel { record, level } => {
                 write!(formatter, "{record} repeats reasoning effort level {level}")
             }
@@ -321,6 +348,32 @@ pub fn validate(
 }
 
 fn validate_spec(spec: &Spec, record: impl Fn() -> SpecRecord, issues: &mut Vec<Issue>) {
+    let mut tiers = BTreeSet::new();
+    if let Some(listed) = &spec.service_tiers {
+        if listed.is_empty() {
+            issues.push(Issue::EmptyServiceTiers { record: record() });
+        }
+        for tier in listed {
+            if tier.is_empty() {
+                issues.push(Issue::EmptyServiceTier { record: record() });
+            }
+            if !tiers.insert(tier.as_str()) {
+                issues.push(Issue::DuplicateServiceTier {
+                    record: record(),
+                    tier: tier.clone(),
+                });
+            }
+        }
+    }
+    if let Some(tier) = &spec.default_service_tier
+        && !tiers.contains(tier.as_str())
+    {
+        issues.push(Issue::UnknownDefaultServiceTier {
+            record: record(),
+            tier: tier.clone(),
+        });
+    }
+
     let Some(Reasoning::Supported(reasoning)) = &spec.reasoning else {
         return;
     };

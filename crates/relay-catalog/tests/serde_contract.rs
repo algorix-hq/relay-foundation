@@ -158,6 +158,8 @@ fn missing_or_null_optional_fields_remain_none_and_are_omitted() {
             "tool_call",
             "reasoning",
             "input_modalities",
+            "service_tiers",
+            "default_service_tier",
         ],
     );
     assert_missing_fields::<Pricing>(json!({}), &["input", "output", "cache_read", "cache_write"]);
@@ -171,6 +173,8 @@ fn missing_or_null_optional_fields_remain_none_and_are_omitted() {
             tool_call: None,
             reasoning: None,
             input_modalities: None,
+            service_tiers: None,
+            default_service_tier: None,
         }
     );
     let pricing: Pricing = serde_json::from_value(json!({})).expect("empty pricing");
