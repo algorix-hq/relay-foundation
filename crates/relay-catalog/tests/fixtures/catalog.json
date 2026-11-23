@@ -6,10 +6,10 @@
   ],
   "providers": [
     { "id": "anthropic", "name": "Anthropic", "symbol": "https://catalog.example.com/symbols/providers/anthropic.svg", "auth": "byok", "api_formats": ["messages"] },
-    { "id": "openai", "name": "OpenAI", "symbol": "https://catalog.example.com/symbols/providers/openai.svg", "auth": "byok", "api_formats": ["chat-completions", "responses"] },
+    { "id": "openai", "name": "OpenAI", "symbol": "https://catalog.example.com/symbols/providers/openai.svg", "auth": "byok", "api_formats": ["chat-completions", "responses"], "base_url": "https://api.openai.com/v1" },
     { "id": "bedrock", "name": "Amazon Bedrock", "symbol": "https://catalog.example.com/symbols/providers/bedrock.svg", "auth": "byok", "api_formats": ["messages"] },
     { "id": "openrouter", "name": "OpenRouter", "symbol": "https://catalog.example.com/symbols/providers/openrouter.svg", "auth": "byok", "api_formats": ["chat-completions", "responses"] },
-    { "id": "groq", "name": "Groq", "auth": "byok", "api_formats": ["chat-completions", "responses"] },
+    { "id": "groq", "name": "Groq", "auth": "byok", "api_formats": ["chat-completions", "responses"], "base_url": "https://api.groq.com/openai/v1", "reasoning_field": "reasoning" },
     { "id": "chatgpt", "name": "ChatGPT", "auth": "subscription", "api_formats": ["responses"] }
   ],
   "models": [

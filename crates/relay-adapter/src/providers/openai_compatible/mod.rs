@@ -2,7 +2,9 @@ mod models;
 
 use std::sync::Arc;
 
-use relay_bridge::{ChatCompletionsBridge, LossScope, chat_completions::MaxTokensField};
+use relay_bridge::{
+    ChatCompletionsBridge, LossScope, ReasoningField, chat_completions::MaxTokensField,
+};
 use relay_protocol::{ConfigurationError, ProviderError, Request};
 use serde_json::Value;
 
@@ -57,6 +59,14 @@ impl OpenAiCompatibleAdapter {
     /// Enables model discovery; without it `list_models` is unsupported.
     pub fn models_url(mut self, models_url: impl Into<String>) -> Self {
         self.models_url = Some(models_url.into());
+        self
+    }
+
+    pub fn reasoning_field(mut self, reasoning_field: ReasoningField) -> Self {
+        self.inner.conversion.set_bridge(Arc::new(
+            ChatCompletionsBridge::with_max_tokens_field(MaxTokensField::MaxTokens)
+                .with_reasoning_field(reasoning_field),
+        ));
         self
     }
 

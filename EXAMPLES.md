@@ -760,8 +760,11 @@ let ollama = OllamaCloudAdapter::new("ollama-key");
 let self_hosted = OpenAiCompatibleAdapter::new("https://llm.example.com/v1/chat/completions")
     .api_key("self-hosted-key")
     .models_url("https://llm.example.com/v1/models")
+    .reasoning_field(relay_bridge::ReasoningField::ReasoningContent)
     .without_tool_choice();
 ```
+
+`OpenAiCompatibleAdapter::reasoning_field` selects the Chat Completions reasoning text field the server uses; the default `ReasoningField::Disabled` rejects responses that carry one.
 
 ## Consumer HTTP transport
 
@@ -1368,7 +1371,8 @@ let labs: Vec<Lab> = serde_json::from_str(r#"[
 ]"#)?;
 let providers: Vec<Provider> = serde_json::from_str(r#"[
     {"id": "bedrock", "name": "Amazon Bedrock", "auth": "byok", "api_formats": ["messages"]},
-    {"id": "openrouter", "name": "OpenRouter", "auth": "byok", "api_formats": ["chat-completions"]}
+    {"id": "openrouter", "name": "OpenRouter", "auth": "byok", "api_formats": ["chat-completions"],
+     "base_url": "https://openrouter.ai/api/v1", "reasoning_field": "reasoning"}
 ]"#)?;
 let models: Vec<Model> = serde_json::from_str(r#"[
     {"id": "claude-sonnet-4-5", "lab": "anthropic", "name": "Claude Sonnet 4.5",
@@ -1393,7 +1397,7 @@ for issue in &issues {
 
 Use `Provider.auth` (`Auth::Byok` or `Auth::Subscription`, serialized as `"byok"` or `"subscription"`) to filter providers the user has credentials for. API-key and subscription offerings are separate providers, such as `openai` and `chatgpt`, because their endpoints, models, and pricing differ.
 
-`api_formats` lists wire-format strings such as `"chat-completions"`, `"responses"`, and `"messages"`; custom strings are allowed. `validate` reports `EmptyApiFormats` and `DuplicateApiFormat`. Aliases share the `(provider, upstream_slug)` key with provider models and reuse `UnknownProvider` and `DuplicateProviderModel`; their targets are checked with `UnknownAliasModel` and `DuplicateAliasModel`.
+`api_formats` lists wire-format strings such as `"chat-completions"`, `"responses"`, and `"messages"`; custom strings are allowed. Optional `base_url` is the API root each format's path is appended to (`/chat/completions`, `/responses`, `/messages`), and optional `reasoning_field` names the Chat Completions reasoning text field (`"reasoning"` or `"reasoning_content"`, matching `relay_bridge::ReasoningField`). Both are plain strings because `relay-catalog` does not depend on `relay-bridge`; a missing value means "not verified", so the consumer decides whether it can call that provider. `validate` reports `EmptyApiFormats` and `DuplicateApiFormat`. Aliases share the `(provider, upstream_slug)` key with provider models and reuse `UnknownProvider` and `DuplicateProviderModel`; their targets are checked with `UnknownAliasModel` and `DuplicateAliasModel`.
 
 ## Choosing a provider model and sending it
 

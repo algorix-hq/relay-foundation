@@ -29,6 +29,21 @@ pub struct Provider {
     /// Wire-format identifiers matching `relay_bridge::ApiFormat` strings, such as `chat-completions`, `responses`, and `messages`.
     #[serde(deserialize_with = "deserialize_non_empty_strings")]
     pub api_formats: Vec<String>,
+    /// API root that each API format's path is appended to, such as `https://api.openai.com/v1`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_non_empty"
+    )]
+    pub base_url: Option<String>,
+    /// Chat Completions message field carrying reasoning text, matching `relay_bridge::ReasoningField`
+    /// names such as `reasoning` and `reasoning_content`; omitted means the provider sends none.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_non_empty"
+    )]
+    pub reasoning_field: Option<String>,
 }
 
 /// Keyed by `(provider, upstream_slug)`.

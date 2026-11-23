@@ -1,7 +1,10 @@
 use std::{fs, path::Path};
 
-use relay_adapter::providers::ollama_cloud::OllamaCloudAdapter;
+use relay_adapter::providers::{
+    ollama_cloud::OllamaCloudAdapter, openai_compatible::OpenAiCompatibleAdapter,
+};
 use relay_adapter::{Adapter, AdapterExt, Headers, Method};
+use relay_bridge::ReasoningField;
 use relay_protocol::{
     AssistantContent, Error, ProviderErrorCategory as Category, Request, StopReason, StreamDelta,
     StreamEvent,
@@ -79,6 +82,27 @@ fn recorded_reasoning_response_decodes_reasoning_and_text() {
         ] if reasoning == "User just says: \"Say hi.\" Provide a greeting. Should be brief."
             && text == "Hi there! 👋"
     ));
+}
+
+#[test]
+fn compatible_adapter_reads_the_selected_reasoning_field_and_rejects_it_by_default() {
+    let (status, headers, body) = live("ollama_reasoning", "json");
+    let response = OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
+        .reasoning_field(ReasoningField::Reasoning)
+        .parse_response(status, &headers, &body)
+        .expect("response");
+    assert!(matches!(
+        response.content.as_slice(),
+        [
+            AssistantContent::Reasoning { .. },
+            AssistantContent::Text { .. }
+        ]
+    ));
+    assert!(
+        OpenAiCompatibleAdapter::new("https://ollama.com/v1/chat/completions")
+            .parse_response(status, &headers, &body)
+            .is_err()
+    );
 }
 
 #[test]

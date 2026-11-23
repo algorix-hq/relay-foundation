@@ -136,7 +136,7 @@ fn missing_or_null_optional_fields_remain_none_and_are_omitted() {
             "id": "provider", "name": "Provider", "auth": "byok",
             "api_formats": ["messages"]
         }),
-        &["symbol"],
+        &["symbol", "base_url", "reasoning_field"],
     );
     assert_missing_fields::<Model>(
         json!({"id": "model", "lab": "lab", "name": "Model"}),
@@ -299,6 +299,21 @@ fn present_symbols_must_not_be_empty() {
     record["auth"] = json!("byok");
     record["api_formats"] = json!(["messages"]);
     assert!(serde_json::from_value::<Provider>(record).is_err());
+}
+
+#[test]
+fn present_provider_connection_fields_must_not_be_empty() {
+    for field in ["base_url", "reasoning_field"] {
+        let mut record = json!({
+            "id": "provider", "name": "Provider", "auth": "byok",
+            "api_formats": ["chat-completions"]
+        });
+        record[field] = json!("");
+        assert!(
+            serde_json::from_value::<Provider>(record).is_err(),
+            "accepted empty {field}"
+        );
+    }
 }
 
 #[test]

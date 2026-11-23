@@ -118,6 +118,8 @@ fn lab_and_provider_namespaces_and_both_provider_model_key_parts_are_independent
             symbol: None,
             auth: Auth::Byok,
             api_formats: vec!["messages".into()],
+            base_url: None,
+            reasoning_field: None,
         },
         Provider {
             id: slug("other"),
@@ -125,6 +127,8 @@ fn lab_and_provider_namespaces_and_both_provider_model_key_parts_are_independent
             symbol: None,
             auth: Auth::Subscription,
             api_formats: vec!["messages".into()],
+            base_url: None,
+            reasoning_field: None,
         },
     ];
     let models = vec![Model {
