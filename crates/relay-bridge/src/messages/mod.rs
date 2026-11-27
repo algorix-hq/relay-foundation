@@ -12,7 +12,10 @@
 //!
 //! Response decoding ignores new fields in known blocks, including SDK text
 //! `citations` and tool-use `caller` and `toolset_name`. Unknown block types are
-//! retained whole. Tool inputs arrive as parsed JSON and are re-serialized into
+//! retained whole. Assistant request history accepts the two values response
+//! encoding adds, text `citations` that is null or empty and tool-use `caller`
+//! `{"type":"direct"}`, so encoded content can be sent back unchanged; any
+//! other value of either field is unrepresentable. Tool inputs arrive as parsed JSON and are re-serialized into
 //! compact JSON, not represented as original argument text. Usage input totals
 //! include ordinary input plus cache reads and cache writes. Stream usage updates
 //! replace cumulative counters; absent/null counters retain their previous value.

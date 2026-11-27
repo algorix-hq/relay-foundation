@@ -66,6 +66,10 @@ pub(super) fn decode_text(
     if string(&value["type"], &pointer(path, "type"))? != "text" {
         return Err(unrepresentable(path, "expected a text block"));
     }
+    text_part(value, path, strict)
+}
+
+fn text_part(value: &Value, path: &str, strict: bool) -> Result<TextPart, BridgeError> {
     Ok(TextPart {
         text: string(&value["text"], &pointer(path, "text"))?,
         cache_control: if strict {
@@ -339,7 +343,18 @@ pub(super) fn decode_assistant(
     let kind = string(&value["type"], &pointer(path, "type"))?;
     match kind.as_str() {
         "text" => {
-            let part = decode_text(value, path, strict)?;
+            if strict {
+                fields(value, &["type", "text", "cache_control", "citations"], path)?;
+                let citations = &value["citations"];
+                if !citations.is_null() && citations.as_array().is_none_or(|list| !list.is_empty())
+                {
+                    return Err(unrepresentable(
+                        &pointer(path, "citations"),
+                        "field has no neutral representation",
+                    ));
+                }
+            }
+            let part = text_part(value, path, strict)?;
             Ok(AssistantContent::Text {
                 id: id.into(),
                 provider_id: None,
@@ -351,9 +366,18 @@ pub(super) fn decode_assistant(
             if strict {
                 fields(
                     value,
-                    &["type", "id", "name", "input", "cache_control"],
+                    &["type", "id", "name", "input", "cache_control", "caller"],
                     path,
                 )?;
+                if value
+                    .get("caller")
+                    .is_some_and(|caller| *caller != json!({"type":"direct"}))
+                {
+                    return Err(unrepresentable(
+                        &pointer(path, "caller"),
+                        "field has no neutral representation",
+                    ));
+                }
             }
             let input = value
                 .get("input")

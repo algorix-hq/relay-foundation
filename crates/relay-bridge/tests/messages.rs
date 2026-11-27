@@ -4,8 +4,8 @@ use relay_bridge::{
     Bridge, BridgeError, ConversionOptions, DecodeContext, Frame, LossScope, MessagesBridge,
 };
 use relay_protocol::{
-    AssistantContent, ConversionErrorKind, Delivery, Message, MetadataScope, Request, StopReason,
-    StreamDelta, StreamEvent, StreamItem, Timestamp, Usage,
+    AssistantContent, ConversionErrorKind, Delivery, Message, MetadataScope, Request, Response,
+    StopReason, StreamDelta, StreamEvent, StreamItem, Timestamp, Usage,
 };
 use serde_json::{Value, json};
 
@@ -1358,4 +1358,139 @@ fn tool_start_waits_for_partial_metadata_and_uses_call_id_not_provider_item_id()
     encoder
         .push(&StreamEvent::ItemEnd { index: 0 }, &mut frames, &mut losses)
         .expect("tool end");
+}
+
+#[test]
+fn encoded_assistant_content_decodes_again_as_request_history() {
+    let bridge = MessagesBridge::new();
+    let usage = Usage {
+        input_tokens: 3,
+        output_tokens: 2,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        reasoning_tokens: None,
+    };
+    let output: Response = serde_json::from_value(json!({
+        "version":"1", "id":"msg_1", "model":"consumer-model",
+        "created_at":{"observed_at":1234},
+        "content":[
+            {"type":"text", "id":"msg_1:0", "text":"Looking"},
+            {"type":"tool_call", "id":"msg_1:1", "call_id":"tool_1", "name":"lookup", "arguments":"{}"}
+        ],
+        "stop_reason":"tool_use", "usage":usage
+    }))
+    .expect("neutral response");
+    let buffered = bridge
+        .encode_response(
+            &protocol_input(json!({})),
+            &output,
+            &ConversionOptions::default(),
+        )
+        .expect("buffered response")
+        .body["content"]
+        .clone();
+
+    let mut encoder =
+        bridge.stream_encoder(&protocol_input(json!({})), &ConversionOptions::default());
+    let mut frames = Vec::new();
+    for event in [
+        start(),
+        provisional_usage(3, 0),
+        item_start(0, StreamItem::Text),
+        StreamEvent::Delta {
+            index: 0,
+            delta: StreamDelta::Text {
+                text: "Looking".into(),
+            },
+        },
+        StreamEvent::ItemEnd { index: 0 },
+        item_start(
+            1,
+            StreamItem::ToolCall {
+                call_id: Some("tool_1".into()),
+                name: Some("lookup".into()),
+            },
+        ),
+        StreamEvent::ItemEnd { index: 1 },
+        StreamEvent::Stop {
+            stop_reason: StopReason::ToolUse,
+            usage: Some(usage),
+        },
+    ] {
+        encoder
+            .push(&event, &mut frames, &mut Vec::new())
+            .expect("stream event");
+    }
+    let streamed: Vec<Value> = frames
+        .iter()
+        .map(|frame| serde_json::from_str::<Value>(&frame.data).expect("JSON"))
+        .filter(|value| value["type"] == "content_block_start")
+        .map(|value| value["content_block"].clone())
+        .collect();
+
+    assert_eq!(buffered[0].get("citations"), Some(&Value::Null));
+    assert_eq!(buffered[1].get("caller"), Some(&json!({"type":"direct"})));
+    let history = |content: Value| {
+        json!({"model":"m", "max_tokens":10, "messages":[
+            {"role":"user", "content":"hi"},
+            {"role":"assistant", "content":content},
+            {"role":"user", "content":[{"type":"tool_result", "tool_use_id":"tool_1", "content":"ok"}]}
+        ]})
+        .to_string()
+    };
+    for content in [buffered, json!(streamed)] {
+        let request = bridge
+            .decode_request(history(content.clone()).as_bytes())
+            .unwrap_or_else(|error| panic!("{content}: {error}"));
+        let Message::Assistant { content, .. } = &request.messages[1] else {
+            panic!("assistant history")
+        };
+        assert!(matches!(
+            &content[..],
+            [
+                AssistantContent::Text { .. },
+                AssistantContent::ToolCall { call_id, .. }
+            ] if call_id == "tool_1"
+        ));
+    }
+    let empty_citations = json!([{"type":"text", "text":"Looking", "citations":[]}]);
+    bridge
+        .decode_request(history(empty_citations).as_bytes())
+        .expect("empty citations carry no meaning");
+
+    for (block, field) in [
+        (
+            json!({"type":"text", "text":"Looking", "citations":[{"type":"char_location"}]}),
+            "citations",
+        ),
+        (
+            json!({"type":"tool_use", "id":"tool_1", "name":"lookup", "input":{}, "caller":{"type":"code_execution_20250825", "tool_id":"srvtoolu_1"}}),
+            "caller",
+        ),
+        (
+            json!({"type":"tool_use", "id":"tool_1", "name":"lookup", "input":{}, "caller":{"type":"direct", "tool_id":"srvtoolu_1"}}),
+            "caller",
+        ),
+    ] {
+        assert_conversion(
+            bridge
+                .decode_request(history(json!([block])).as_bytes())
+                .expect_err("meaningful value"),
+            ConversionErrorKind::Unrepresentable,
+            &format!("/messages/1/content/0/{field}"),
+        );
+    }
+    assert_conversion(
+        bridge
+            .decode_request(
+                json!({"model":"m", "max_tokens":10, "messages":[
+                    {"role":"user", "content":[{"type":"text", "text":"hi", "citations":null}]}
+                ]})
+                .to_string()
+                .as_bytes(),
+            )
+            .expect_err("user text never carries citations"),
+        ConversionErrorKind::Unrepresentable,
+        "/messages/0/content/0/citations",
+    );
 }
