@@ -299,8 +299,15 @@ pub(super) fn encode_content(
                     && reasoning.is_none()
                     && provider_id.is_none()
                     && summary.is_empty()
-                    && opaque.is_none()
                 {
+                    if opaque.is_some() {
+                        omit(
+                            options,
+                            losses,
+                            LossScope::Reasoning,
+                            &format!("{path}/opaque"),
+                        )?;
+                    }
                     reasoning = Some((name, text.clone()));
                 } else {
                     omit(options, losses, LossScope::Reasoning, &path)?;

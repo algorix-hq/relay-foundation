@@ -155,7 +155,8 @@ These come from the built-in bridges' `encode_request`. "Loss" means the field i
 |---|---|
 | `reasoning.budget_tokens`, `reasoning.summary`, `reasoning.thinking` | Error (only `effort` is carried) |
 | Assistant reasoning content | One text-only item is carried when `ReasoningField::ReasoningContent` or `ReasoningField::Reasoning` is selected; otherwise Loss `Reasoning` |
-| Reasoning summaries, opaque values, provider identity, or multiple reasoning item boundaries | Not representable in the selected string field; Loss `Reasoning`, never silently merged |
+| Reasoning summaries, provider identity, opaque-only items, or multiple reasoning item boundaries | Not representable in the selected string field; Loss `Reasoning` for the whole item, never silently merged |
+| Opaque value on a reasoning item that is otherwise representable (text, no summary or provider identity) | Loss `Reasoning` at `<item path>/opaque`; the text is carried |
 | `cache_control` anywhere | Loss `CacheControl` |
 | `DocumentPart.title`, URL documents | Error |
 | `ToolResult { is_error: Some(true) }`, non-text tool results | Error |

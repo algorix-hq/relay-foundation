@@ -371,9 +371,9 @@ fn unsupported_reasoning_is_rejected_or_omitted_as_a_whole_item() {
         let bridge = ChatCompletionsBridge::new().with_reasoning_field(field);
         for extra in [
             json!({"summary":[""]}),
-            json!({"opaque":""}),
             json!({"provider_id":""}),
             json!({"text":null}),
+            json!({"text":null,"opaque":"signature"}),
         ] {
             let mut reasoning = json!({"type":"reasoning","id":"thought","text":"must not leak"});
             reasoning
@@ -421,6 +421,138 @@ fn unsupported_reasoning_is_rejected_or_omitted_as_a_whole_item() {
                         .collect::<Vec<_>>(),
                     [path]
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn opaque_value_is_the_only_loss_when_reasoning_also_has_text() {
+    let options = ConversionOptions {
+        allow_loss: [LossScope::Reasoning].into(),
+    };
+    for ((field, key, _), opaque) in fields().into_iter().zip(["signature", ""]) {
+        let bridge = ChatCompletionsBridge::new().with_reasoning_field(field);
+        let content = json!([
+            {"type":"reasoning","id":"thought","text":"thinking","opaque":opaque},
+            {"type":"text","id":"answer","text":"answer"}
+        ]);
+        let input = request(content.clone());
+        let output = response(content);
+        assert_unrepresentable(
+            bridge
+                .encode_request(&input, &ConversionOptions::default())
+                .expect_err("strict history"),
+        );
+        assert_unrepresentable(
+            bridge
+                .encode_response(&input, &output, &ConversionOptions::default())
+                .expect_err("strict response"),
+        );
+        let encoded_request = bridge
+            .encode_request(&input, &options)
+            .expect("permitted history loss");
+        let encoded_response = bridge
+            .encode_response(&input, &output, &options)
+            .expect("permitted response loss");
+        for (encoded, message, path) in [
+            (
+                &encoded_request,
+                &encoded_request.body["messages"][0],
+                "/messages/0/content/0/opaque",
+            ),
+            (
+                &encoded_response,
+                &encoded_response.body["choices"][0]["message"],
+                "/content/0/opaque",
+            ),
+        ] {
+            assert_eq!(message[key], "thinking");
+            assert_eq!(message["content"], "answer");
+            assert_eq!(
+                encoded
+                    .losses
+                    .iter()
+                    .map(|loss| loss.path.as_str())
+                    .collect::<Vec<_>>(),
+                [path]
+            );
+        }
+    }
+}
+
+#[test]
+fn stream_drops_only_the_opaque_value_of_reasoning_that_has_text() {
+    for ((field, key, _), value) in fields().into_iter().zip(["signature", ""]) {
+        let opaque = || StreamEvent::Delta {
+            index: 0,
+            delta: StreamDelta::ReasoningOpaque {
+                value: value.into(),
+            },
+        };
+        let bridge = ChatCompletionsBridge::new().with_reasoning_field(field);
+        for (deltas, expected_text, loss_path) in [
+            (
+                vec![
+                    reasoning_text(0, "thin"),
+                    reasoning_text(0, "king"),
+                    opaque(),
+                ],
+                Some("thinking"),
+                "/items/0/opaque",
+            ),
+            (
+                vec![opaque(), reasoning_text(0, "thinking")],
+                Some("thinking"),
+                "/items/0/opaque",
+            ),
+            (vec![opaque()], None, "/items/0"),
+        ] {
+            let mut strict =
+                bridge.stream_encoder(&request(json!([])), &ConversionOptions::default());
+            let mut frames = Vec::new();
+            let mut losses = Vec::new();
+            let events = [start(), reasoning_start(0)]
+                .into_iter()
+                .chain(deltas)
+                .chain([StreamEvent::ItemEnd { index: 0 }, stop()])
+                .collect::<Vec<_>>();
+            let error = events
+                .iter()
+                .find_map(|event| strict.push(event, &mut frames, &mut losses).err())
+                .expect("strict opaque value");
+            assert_unrepresentable(error);
+            assert!(losses.is_empty());
+
+            let options = ConversionOptions {
+                allow_loss: [LossScope::Reasoning].into(),
+            };
+            let mut encoder = bridge.stream_encoder(&request(json!([])), &options);
+            frames.clear();
+            for event in &events {
+                encoder
+                    .push(event, &mut frames, &mut losses)
+                    .expect("permitted opaque loss");
+            }
+            encoder
+                .finish(&mut frames, &mut losses)
+                .expect("complete stream");
+            assert_eq!(
+                losses
+                    .iter()
+                    .map(|loss| loss.path.as_str())
+                    .collect::<Vec<_>>(),
+                [loss_path]
+            );
+            let values = chunks(&frames);
+            let fragments = values
+                .iter()
+                .filter_map(|value| value["choices"][0]["delta"].get(key))
+                .map(|value| value.as_str().expect("reasoning text"))
+                .collect::<Vec<_>>();
+            match expected_text {
+                Some(text) => assert_eq!(fragments.concat(), text),
+                None => assert!(fragments.is_empty()),
             }
         }
     }
@@ -678,10 +810,6 @@ fn later_unsupported_stream_data_never_leaks_partial_reasoning() {
                     summary_index: 0,
                     text: "".into(),
                 },
-            },
-            StreamEvent::Delta {
-                index: 0,
-                delta: StreamDelta::ReasoningOpaque { value: "".into() },
             },
             StreamEvent::Metadata(MetadataScope::Item {
                 index: 0,

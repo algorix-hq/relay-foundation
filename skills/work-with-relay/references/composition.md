@@ -85,7 +85,7 @@ let adapter = BaseAdapter::new(Arc::new(bridge), "https://api.example.com/v1/cha
 
 `with_reasoning_field(self, field)` is an instance builder, also chainable on `ChatCompletionsBridge::new()`. `ReasoningField` is exported from `relay_bridge` alongside `ChatCompletionsBridge`: `Disabled` (default), `ReasoningContent` (`reasoning_content`), or `Reasoning` (`reasoning`). It controls request/history, response, and stream conversion in both directions. The selected string field maps to protocol reasoning text; `reasoning_effort` remains independent.
 
-Choose the field from the endpoint's wire contract, not a model or provider name. There is no autodetection or provider configuration, `<think>` extraction, or `reasoning_details` support. Only text is representable, not summaries, opaque values, provider identity, or merged boundaries from multiple reasoning items. See `errors.md` for strict rejection and allowed encoding losses.
+Choose the field from the endpoint's wire contract, not a model or provider name. There is no autodetection or provider configuration, `<think>` extraction, or `reasoning_details` support. Only text is representable, not summaries, opaque values, provider identity, or merged boundaries from multiple reasoning items. When the loss is allowed and the opaque value is the only unrepresentable part of an item, it is dropped on its own and the item's text is kept. See `errors.md` for strict rejection and allowed encoding losses.
 
 The client bridge and provider bridge may select different fields. The consumer owns whether reasoning is included in replay/history; the option does not manage or append history.
 

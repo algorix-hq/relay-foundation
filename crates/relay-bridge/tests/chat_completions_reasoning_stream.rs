@@ -135,8 +135,9 @@ fn buffered_reasoning_retains_interleaved_frame_order_when_kept_or_omitted() {
                     .push(
                         &StreamEvent::Delta {
                             index: 0,
-                            delta: StreamDelta::ReasoningOpaque {
-                                value: "opaque".into(),
+                            delta: StreamDelta::ReasoningSummary {
+                                summary_index: 0,
+                                text: "summary".into(),
                             },
                         },
                         &mut frames,

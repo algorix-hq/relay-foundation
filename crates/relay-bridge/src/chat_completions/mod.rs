@@ -21,6 +21,12 @@
 //! Legacy calls without a tool-call ID are preserved as unknown output; ingress
 //! rejects them rather than inventing IDs. Inline documents require a media-typed
 //! base64 data URL because the neutral source must retain its media type.
+//! A reasoning item whose only unrepresentable part is its opaque value keeps its
+//! text when Reasoning loss is allowed and loses the opaque value alone, reported
+//! at `<item path>/opaque`; the stream encoder reports it at `ItemEnd`. Every other
+//! unrepresentable reasoning item is omitted whole. A stream decides at `ItemStart`,
+//! so a reasoning item that starts while an earlier one is still open is omitted
+//! even if the earlier one later turns out to carry no text.
 
 mod request;
 mod response;

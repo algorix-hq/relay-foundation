@@ -308,7 +308,7 @@ struct EncodedItem {
 enum EncodedKind {
     Text,
     Tool(u32),
-    Reasoning { has_text: bool },
+    Reasoning { has_text: bool, has_opaque: bool },
     Omitted(LossScope),
 }
 
@@ -483,7 +483,10 @@ impl Encoder {
                             && !multiple
                         {
                             self.delta(json!({field:""}), out)?;
-                            EncodedKind::Reasoning { has_text: false }
+                            EncodedKind::Reasoning {
+                                has_text: false,
+                                has_opaque: false,
+                            }
                         } else {
                             omit(&self.options, losses, LossScope::Reasoning, &path)?;
                             EncodedKind::Omitted(LossScope::Reasoning)
@@ -511,7 +514,10 @@ impl Encoder {
                     (EncodedKind::Tool(index), StreamDelta::ToolCallArguments { text }) => {
                         Some(json!({"tool_calls":[{"index":index,"function":{"arguments":text}}]}))
                     }
-                    (EncodedKind::Reasoning { has_text }, StreamDelta::ReasoningText { text }) => {
+                    (
+                        EncodedKind::Reasoning { has_text, .. },
+                        StreamDelta::ReasoningText { text },
+                    ) => {
                         *has_text = true;
                         let field = self
                             .reasoning_field
@@ -520,8 +526,21 @@ impl Encoder {
                         Some(json!({field:text}))
                     }
                     (
+                        EncodedKind::Reasoning { has_opaque, .. },
+                        StreamDelta::ReasoningOpaque { .. },
+                    ) => {
+                        if !self.options.allow_loss.contains(&LossScope::Reasoning) {
+                            return Err(unrepresentable(
+                                &format!("{path}/opaque"),
+                                "no Chat Completions representation",
+                            ));
+                        }
+                        *has_opaque = true;
+                        None
+                    }
+                    (
                         kind @ EncodedKind::Reasoning { .. },
-                        StreamDelta::ReasoningSummary { .. } | StreamDelta::ReasoningOpaque { .. },
+                        StreamDelta::ReasoningSummary { .. },
                     ) => {
                         omit(&self.options, losses, LossScope::Reasoning, &path)?;
                         *kind = EncodedKind::Omitted(LossScope::Reasoning);
@@ -550,9 +569,22 @@ impl Encoder {
                     .get_mut(index)
                     .filter(|item| !item.ended)
                     .ok_or_else(|| invalid(&path, "ItemEnd requires an open item"))?;
-                if matches!(item.kind, EncodedKind::Reasoning { has_text: false }) {
-                    omit(&self.options, losses, LossScope::Reasoning, &path)?;
-                    item.kind = EncodedKind::Omitted(LossScope::Reasoning);
+                match item.kind {
+                    EncodedKind::Reasoning {
+                        has_text: false, ..
+                    } => {
+                        omit(&self.options, losses, LossScope::Reasoning, &path)?;
+                        item.kind = EncodedKind::Omitted(LossScope::Reasoning);
+                    }
+                    EncodedKind::Reasoning {
+                        has_opaque: true, ..
+                    } => omit(
+                        &self.options,
+                        losses,
+                        LossScope::Reasoning,
+                        &format!("{path}/opaque"),
+                    )?,
+                    _ => {}
                 }
                 item.ended = true;
             }
@@ -612,7 +644,7 @@ impl StreamEncoder for Encoder {
                 let item = self.items.get(&index).ok_or_else(|| {
                     invalid(&format!("/items/{index}"), "reasoning state missing")
                 })?;
-                if let EncodedKind::Reasoning { has_text } = item.kind
+                if let EncodedKind::Reasoning { has_text, .. } = item.kind
                     && !item.ended
                     && (!has_text || self.options.allow_loss.contains(&LossScope::Reasoning))
                 {

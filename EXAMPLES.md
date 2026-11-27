@@ -583,7 +583,7 @@ assert_eq!(encoded.body["messages"][0]["reasoning_content"], "6 times 7 is 42.")
 
 `ReasoningField::Disabled` is the default. Select `ReasoningContent` for `reasoning_content` or `Reasoning` for `reasoning`. The instance builder also works on `ChatCompletionsBridge::new()`. The selection applies in both directions to request/history, responses, and stream deltas, mapping the selected string field to protocol reasoning text.
 
-Only reasoning text is representable: summaries, opaque values, provider identity, and merging multiple reasoning item boundaries into one string are not supported. Encoding unrepresentable reasoning fails unless the consumer explicitly allows `LossScope::Reasoning` and handles the reported losses.
+Only reasoning text is representable: summaries, opaque values, provider identity, and merging multiple reasoning item boundaries into one string are not supported. Encoding unrepresentable reasoning fails unless the consumer explicitly allows `LossScope::Reasoning` and handles the reported losses. With that permission, an item whose only unrepresentable part is its opaque value keeps its text and loses the opaque value alone, reported at `<item path>/opaque`; every other case omits the whole item.
 
 **Breaking behavior:** known reasoning fields carrying data are now rejected when disabled or unselected, rather than silently discarded during decoding. Select the field each endpoint actually uses; there is no autodetection, model lookup, or provider configuration. `reasoning_effort` is independent of this option. There is no `<think>` extraction or `reasoning_details` support.
 
