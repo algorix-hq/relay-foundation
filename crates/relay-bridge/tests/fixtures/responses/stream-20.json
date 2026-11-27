@@ -11,7 +11,8 @@
       {
         "type": "output_text",
         "text": "Answer",
-        "annotations": []
+        "annotations": [],
+        "logprobs": []
       }
     ]
   }

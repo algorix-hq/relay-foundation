@@ -161,7 +161,7 @@ impl Encoder {
         )?;
         let mut wire = wire;
         if matches!(item, StreamItem::Text) {
-            let part = json!({"type":"output_text", "text":"", "annotations":[]});
+            let part = json!({"type":"output_text", "text":"", "annotations":[], "logprobs":[]});
             self.emit_value(
                 "response.content_part.added",
                 json!({"output_index":output_index, "item_id":id, "content_index":0, "part":part}),

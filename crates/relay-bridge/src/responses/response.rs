@@ -244,7 +244,8 @@ pub(super) fn encode(
                 ..
             } => {
                 request::cache(cache_control, &path, options, &mut losses)?;
-                let part = json!({"type":"output_text", "text":text, "annotations":[]});
+                let part =
+                    json!({"type":"output_text", "text":text, "annotations":[], "logprobs":[]});
                 if let Some(parts) = items
                     .last_mut()
                     .filter(|item| item["type"] == "message" && item["id"] == *id)
